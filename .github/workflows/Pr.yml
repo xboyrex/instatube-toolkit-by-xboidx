@@ -1,0 +1,36 @@
+name: PR check 
+
+on:
+  pull_request:
+    branches: [ main, master ]
+  push:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    if: github.event_name == 'pull_request' || github.repository != 'Orang-Studio/InstaDownload'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+        working-directory: InstaDownload
+
+      - name: Build debug APK
+        run: ./gradlew assembleDebug
+        working-directory: InstaDownload
+
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-apk
+          path: InstaDownload/app/build/outputs/apk/debug/*.apk
