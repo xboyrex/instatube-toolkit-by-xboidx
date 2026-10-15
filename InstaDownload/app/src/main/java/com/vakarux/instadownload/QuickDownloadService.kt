@@ -120,7 +120,7 @@ class QuickDownloadService : Service() {
             .build()
 
     private fun mainActivityPendingIntent(): PendingIntent {
-        val intent = Intent(this, MainActivity::class.java).apply {
+        val intent = Intent(this, ModernHomeActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
         }
         val flags = PendingIntent.FLAG_UPDATE_CURRENT or
