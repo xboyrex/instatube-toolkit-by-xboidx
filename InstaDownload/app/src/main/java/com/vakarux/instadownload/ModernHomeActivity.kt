@@ -6,11 +6,7 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.BitmapFactory
 import android.net.Uri
-import android.os.Build
 import android.os.Bundle
-import android.os.VibrationEffect
-import android.os.Vibrator
-import android.os.VibratorManager
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -29,6 +25,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -51,60 +48,63 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-private val XPink = Color(0xFFFF4F91)
-private val XCoral = Color(0xFFFF845C)
-private val XViolet = Color(0xFF9D6BFF)
+private val RexAccent = Color(0xFFFF477E)
+private val RexAccentSoft = Color(0xFFFFD7E4)
+private val RexViolet = Color(0xFF8B73FF)
+private val RexCoral = Color(0xFFFF8868)
 
-private enum class ToolkitDestination(val label: String) {
-    HOME("Home"), LIBRARY("Library"), CAPTION("Caption Lab"), SETTINGS("Settings")
+private enum class RexTab(val label: String) {
+    HOME("Home"), LIBRARY("Library"), CAPTION("Captions"), SETTINGS("Settings")
 }
-
-private data class SavedEntry(val title: String, val url: String, val count: Int, val savedAt: Long)
+private enum class MediaSource(val label: String) { INSTAGRAM("Instagram"), YOUTUBE("YouTube") }
+private data class RexSavedItem(
+    val title: String,
+    val url: String,
+    val count: Int,
+    val savedAt: Long,
+    val source: String = "Instagram"
+)
 
 class ModernHomeActivity : ComponentActivity() {
     private val appSettings by lazy { AppSettings(this) }
     private val selectedFolderName = mutableStateOf(AppSettings.DEFAULT_FOLDER_NAME)
-    private val incomingUrl = mutableStateOf("")
+    private val sharedUrl = mutableStateOf("")
 
-    private val folderPickerLauncher = registerForActivityResult(
-        ActivityResultContracts.OpenDocumentTree()
-    ) { uri ->
-        uri ?: return@registerForActivityResult
-        runCatching {
-            contentResolver.takePersistableUriPermission(
-                uri,
-                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
-            )
+    private val folderPickerLauncher = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        if (uri != null) {
+            runCatching {
+                contentResolver.takePersistableUriPermission(
+                    uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                )
+            }
+            val name = runCatching {
+                android.provider.DocumentsContract.getTreeDocumentId(uri).substringAfterLast(':')
+            }.getOrNull()?.takeIf { it.isNotBlank() } ?: getString(R.string.selected_folder_default)
+            appSettings.downloadTreeUri = uri.toString()
+            appSettings.downloadFolderName = name
+            selectedFolderName.value = name
         }
-        val name = runCatching {
-            android.provider.DocumentsContract.getTreeDocumentId(uri).substringAfterLast(':')
-        }.getOrNull()?.takeIf { it.isNotBlank() } ?: getString(R.string.selected_folder_default)
-        appSettings.downloadTreeUri = uri.toString()
-        appSettings.downloadFolderName = name
-        selectedFolderName.value = name
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         selectedFolderName.value = appSettings.downloadFolderName
-        incomingUrl.value = readSharedUrl(intent)
+        sharedUrl.value = extractSharedUrl(intent)
         setContent {
-            var selectedTheme by remember { mutableStateOf(appSettings.theme) }
-            val dark = when (selectedTheme) {
+            var themeChoice by remember { mutableStateOf(appSettings.theme) }
+            val isDark = when (themeChoice) {
                 AppTheme.SYSTEM -> androidx.compose.foundation.isSystemInDarkTheme()
                 AppTheme.LIGHT -> false
                 AppTheme.DARK -> true
             }
-            InstaDownloadTheme(darkTheme = dark) {
-                ModernToolkitScreen(
-                    initialUrl = incomingUrl.value,
+            InstaDownloadTheme(darkTheme = isDark) {
+                RexToolkitRoot(
+                    incomingUrl = sharedUrl.value,
                     settings = appSettings,
-                    selectedTheme = selectedTheme,
-                    selectedFolderName = selectedFolderName.value,
-                    onThemeChanged = {
-                        appSettings.theme = it
-                        selectedTheme = it
-                    },
+                    themeChoice = themeChoice,
+                    folderName = selectedFolderName.value,
+                    onThemeChoice = { appSettings.theme = it; themeChoice = it },
                     onChooseFolder = { folderPickerLauncher.launch(null) }
                 )
             }
@@ -114,79 +114,136 @@ class ModernHomeActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        incomingUrl.value = readSharedUrl(intent)
+        sharedUrl.value = extractSharedUrl(intent)
     }
 
-    private fun readSharedUrl(intent: Intent?): String {
+    private fun extractSharedUrl(intent: Intent?): String {
         if (intent?.action != Intent.ACTION_SEND || intent.type != "text/plain") return ""
         val text = intent.getStringExtra(Intent.EXTRA_TEXT).orEmpty()
-        return Regex("""https?://(?:www\.)?(?:instagram\.com|instagr\.am)/[^\s]+""")
-            .find(text)?.value?.trimEnd('.', ',', ')', ']', '}') ?: ""
+        return Regex("""https?://[^\s]+""").find(text)?.value?.trimEnd('.', ',', ')', ']', '}') ?: ""
     }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun ModernToolkitScreen(
-    initialUrl: String,
+private fun RexToolkitRoot(
+    incomingUrl: String,
     settings: AppSettings,
-    selectedTheme: AppTheme,
-    selectedFolderName: String,
-    onThemeChanged: (AppTheme) -> Unit,
+    themeChoice: AppTheme,
+    folderName: String,
+    onThemeChoice: (AppTheme) -> Unit,
     onChooseFolder: () -> Unit
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    var destination by remember { mutableStateOf(ToolkitDestination.HOME) }
-    var url by remember(initialUrl) { mutableStateOf(initialUrl) }
-    var loading by remember { mutableStateOf(false) }
-    var saving by remember { mutableStateOf(false) }
-    var error by remember { mutableStateOf<String?>(null) }
-    var status by remember { mutableStateOf<String?>(null) }
-    var media by remember { mutableStateOf<List<MediaResult>>(emptyList()) }
-    var selectedIndices by remember { mutableStateOf<Set<Int>>(emptySet()) }
+    var tab by remember { mutableStateOf(RexTab.HOME) }
+    var source by remember { mutableStateOf(if (YouTubeResolver.isYouTubeUrl(incomingUrl)) MediaSource.YOUTUBE else MediaSource.INSTAGRAM) }
+    var instagramUrl by rememberSaveable { mutableStateOf("") }
+    var youtubeUrl by rememberSaveable { mutableStateOf("") }
+    var isFetching by remember { mutableStateOf(false) }
+    var isSaving by remember { mutableStateOf(false) }
+    var errorText by remember { mutableStateOf<String?>(null) }
+    var infoText by remember { mutableStateOf<String?>(null) }
+    var instagramItems by remember { mutableStateOf<List<MediaResult>>(emptyList()) }
+    var selectedItems by remember { mutableStateOf<Set<Int>>(emptySet()) }
+    var youtubeInfo by remember { mutableStateOf<YouTubeMetadata?>(null) }
+    var captionText by rememberSaveable { mutableStateOf("") }
     var quality by remember { mutableStateOf(settings.quality) }
     var haptics by remember { mutableStateOf(settings.hapticsEnabled) }
     var customWidth by remember { mutableIntStateOf(settings.customWidth) }
-    var historyVersion by remember { mutableIntStateOf(0) }
-    var captionDraft by remember { mutableStateOf("") }
+    var libraryRefresh by remember { mutableIntStateOf(0) }
 
-    LaunchedEffect(media) { captionDraft = media.firstOrNull()?.meta?.caption.orEmpty() }
+    val activeUrl = if (source == MediaSource.INSTAGRAM) instagramUrl else youtubeUrl
+    val setActiveUrl: (String) -> Unit = { value ->
+        // If the clipboard contains a link from the other supported platform, switch scopes automatically.
+        when {
+            value.isNotBlank() && YouTubeResolver.isYouTubeUrl(value) -> {
+                source = MediaSource.YOUTUBE
+                youtubeUrl = value
+            }
+            value.isNotBlank() && isInstagramLink(value) -> {
+                source = MediaSource.INSTAGRAM
+                instagramUrl = value
+            }
+            source == MediaSource.INSTAGRAM -> instagramUrl = value
+            else -> youtubeUrl = value
+        }
+        errorText = null
+        infoText = null
+    }
 
-    val copyText: (String, String) -> Unit = { label, text ->
-        if (text.isBlank()) {
-            Toast.makeText(context, "Nothing to copy yet", Toast.LENGTH_SHORT).show()
-        } else {
-            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-            clipboard.setPrimaryClip(ClipData.newPlainText(label, text))
-            Toast.makeText(context, "$label copied", Toast.LENGTH_SHORT).show()
+    LaunchedEffect(incomingUrl) {
+        if (incomingUrl.isNotBlank()) {
+            if (YouTubeResolver.isYouTubeUrl(incomingUrl)) {
+                source = MediaSource.YOUTUBE
+                youtubeUrl = incomingUrl
+            } else if (isInstagramLink(incomingUrl)) {
+                source = MediaSource.INSTAGRAM
+                instagramUrl = incomingUrl
+            }
+            tab = RexTab.HOME
         }
     }
 
-    val fetchMedia: () -> Unit = {
-        val trimmed = url.trim()
-        when {
-            trimmed.isBlank() -> error = "Paste an Instagram link first."
-            !isSupportedInstagramLink(trimmed) -> error = "Use a public Instagram post, reel, carousel, or profile link."
-            trimmed.contains("/stories/") -> error = "Stories are not supported by this public-link build."
-            else -> scope.launch {
-                loading = true
-                error = null
-                status = null
-                media = emptyList()
-                selectedIndices = emptySet()
-                val result = runCatching {
-                    withContext(Dispatchers.IO) {
-                        InstagramDownloader.getMediaItems(trimmed, settings.targetWidth())
+    val copyToClipboard: (String, String) -> Unit = { label, value ->
+        if (value.isBlank()) Toast.makeText(context, "Nothing to copy yet", Toast.LENGTH_SHORT).show()
+        else {
+            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            clipboard.setPrimaryClip(ClipData.newPlainText(label, value))
+            Toast.makeText(context, "$label copied", Toast.LENGTH_SHORT).show()
+        }
+    }
+    val openExternal: (String) -> Unit = { target ->
+        runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(target))) }
+            .onFailure { Toast.makeText(context, "Could not open link", Toast.LENGTH_SHORT).show() }
+    }
+
+    val fetchCurrent: () -> Unit = {
+        val candidate = activeUrl.trim()
+        when (source) {
+            MediaSource.INSTAGRAM -> {
+                when {
+                    candidate.isBlank() -> errorText = "Paste an Instagram link to continue."
+                    !isInstagramLink(candidate) -> errorText = "Use a valid Instagram post, Reel, carousel or public profile link."
+                    candidate.contains("/stories/") -> errorText = "Stories aren't supported in this public-link build."
+                    else -> scope.launch {
+                        isFetching = true
+                        errorText = null
+                        infoText = null
+                        instagramItems = emptyList()
+                        selectedItems = emptySet()
+                        youtubeInfo = null
+                        val result = runCatching {
+                            withContext(Dispatchers.IO) { InstagramDownloader.getMediaItems(candidate, settings.targetWidth()) }
+                        }
+                        isFetching = false
+                        result.onSuccess { items ->
+                            instagramItems = items
+                            selectedItems = items.indices.toSet()
+                            captionText = items.firstOrNull()?.meta?.caption.orEmpty()
+                            infoText = if (items.size > 1) "${items.size} carousel items found" else "Preview is ready"
+                        }.onFailure { errorText = friendlyInstagramError(it.message) }
                     }
                 }
-                loading = false
-                result.onSuccess { items ->
-                    media = items
-                    selectedIndices = items.indices.toSet()
-                    status = if (items.size > 1) "Found " + items.size + " carousel items." else "Media is ready to save."
-                }.onFailure { failure ->
-                    error = failure.message ?: "Could not fetch this public post."
+            }
+            MediaSource.YOUTUBE -> {
+                when {
+                    candidate.isBlank() -> errorText = "Paste a YouTube video link to continue."
+                    !YouTubeResolver.isYouTubeUrl(candidate) -> errorText = "Use a YouTube watch, Shorts or youtu.be link."
+                    else -> scope.launch {
+                        isFetching = true
+                        errorText = null
+                        infoText = null
+                        youtubeInfo = null
+                        instagramItems = emptyList()
+                        selectedItems = emptySet()
+                        val result = runCatching { withContext(Dispatchers.IO) { YouTubeResolver.fetchMetadata(candidate) } }
+                        isFetching = false
+                        result.onSuccess {
+                            youtubeInfo = it
+                            infoText = "Public video details loaded"
+                        }.onFailure { errorText = it.message ?: "Video details aren't available for this link." }
+                    }
                 }
             }
         }
@@ -194,607 +251,762 @@ private fun ModernToolkitScreen(
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
-        bottomBar = {
-            NavigationBar(containerColor = MaterialTheme.colorScheme.surface, tonalElevation = 8.dp) {
-                ToolkitDestination.values().forEach { item ->
-                    val icon = when (item) {
-                        ToolkitDestination.HOME -> AppIcons.PlayArrow
-                        ToolkitDestination.LIBRARY -> AppIcons.Image
-                        ToolkitDestination.CAPTION -> AppIcons.ContentCopy
-                        ToolkitDestination.SETTINGS -> AppIcons.Settings
-                    }
-                    NavigationBarItem(
-                        selected = destination == item,
-                        onClick = { destination = item },
-                        icon = { Icon(icon, contentDescription = item.label, modifier = Modifier.size(22.dp)) },
-                        label = { Text(item.label, maxLines = 1) },
-                        alwaysShowLabel = true
-                    )
-                }
-            }
-        }
-    ) { padding ->
+        bottomBar = { RexBottomBar(selected = tab, onSelect = { tab = it }) }
+    ) { scaffoldPadding ->
         Column(
-            modifier = Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState())
-                .padding(horizontal = 18.dp).padding(top = 14.dp, bottom = 24.dp),
-            verticalArrangement = Arrangement.spacedBy(18.dp)
+            modifier = Modifier.fillMaxSize().padding(scaffoldPadding).padding(horizontal = 20.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            AppTopBar(
-                onSettings = { destination = ToolkitDestination.SETTINGS },
-                onHome = { destination = ToolkitDestination.HOME }
+            RexTopBar(
+                onGitHub = { openExternal("https://github.com/xboyrex/instatube-toolkit-by-xboidx") },
+                onCreator = { openExternal("https://www.youtube.com/results?search_query=Xboy+Rex") },
+                onSettings = { tab = RexTab.SETTINGS }
             )
-            when (destination) {
-                ToolkitDestination.HOME -> {
-                    HeroPanel()
-                    LinkInputCard(
-                        url = url,
-                        onUrlChange = { url = it; error = null; status = null },
-                        loading = loading,
-                        onPaste = {
-                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                            val pasted = clipboard.primaryClip?.getItemAt(0)?.text?.toString().orEmpty()
-                            if (pasted.isNotBlank()) { url = pasted; error = null }
-                            else Toast.makeText(context, "Clipboard is empty", Toast.LENGTH_SHORT).show()
+            Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                when (tab) {
+                    RexTab.HOME -> RexHomeScreen(
+                        source = source,
+                        onSourceChange = { newSource ->
+                            source = newSource
+                            errorText = null
+                            infoText = null
                         },
-                        onClear = { url = ""; media = emptyList(); selectedIndices = emptySet(); error = null; status = null },
-                        onFetch = fetchMedia
-                    )
-                    if (loading) LinearProgressIndicator(
-                        modifier = Modifier.fillMaxWidth(), color = XPink,
-                        trackColor = MaterialTheme.colorScheme.surfaceVariant
-                    )
-                    error?.let { FeedbackBanner(it, true) }
-                    status?.let { FeedbackBanner(it, false) }
-                    if (media.isNotEmpty()) {
-                        MediaResultPanel(
-                            items = media,
-                            selectedIndices = selectedIndices,
-                            onToggle = { index ->
-                                selectedIndices = if (index in selectedIndices) selectedIndices - index else selectedIndices + index
-                            },
-                            onSelectAll = { selectedIndices = media.indices.toSet() },
-                            onSelectNone = { selectedIndices = emptySet() },
-                            saving = saving,
-                            onDownload = {
-                                if (selectedIndices.isEmpty()) {
-                                    error = "Select at least one item to save."
-                                } else {
-                                    scope.launch {
-                                        saving = true
-                                        error = null
-                                        status = null
-                                        val chosen = media.filterIndexed { index, _ -> index in selectedIndices }
-                                        val result = runCatching {
-                                            withContext(Dispatchers.IO) {
-                                                chosen.forEach { item -> saveToDownloads(item, context, settings) }
-                                            }
-                                        }
-                                        saving = false
-                                        result.onSuccess {
-                                            vibrate(context, haptics)
-                                            val title = chosen.firstOrNull()?.meta?.caption
-                                                ?.lineSequence()?.firstOrNull()?.take(64)?.ifBlank { null }
-                                                ?: chosen.firstOrNull()?.baseName ?: "Instagram media"
-                                            saveHistory(context, SavedEntry(title, url.trim(), chosen.size, System.currentTimeMillis()))
-                                            historyVersion++
-                                            status = "Saved " + chosen.size + if (chosen.size == 1) " item to Downloads." else " items to Downloads."
-                                            Toast.makeText(context, "Saved to Downloads/InstaDownload", Toast.LENGTH_LONG).show()
-                                        }.onFailure { error = it.message ?: "Download failed. Try again." }
-                                    }
+                        activeUrl = activeUrl,
+                        onUrlChange = setActiveUrl,
+                        isFetching = isFetching,
+                        isSaving = isSaving,
+                        errorText = errorText,
+                        infoText = infoText,
+                        instagramItems = instagramItems,
+                        selectedItems = selectedItems,
+                        youtubeInfo = youtubeInfo,
+                        onPaste = {
+                            val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                            val clipboardValue = cm.primaryClip?.getItemAt(0)?.text?.toString().orEmpty()
+                            if (clipboardValue.isNotBlank()) {
+                                val urlMatch = Regex("""https?://[^\s]+""").find(clipboardValue)?.value ?: clipboardValue
+                                setActiveUrl(urlMatch.trimEnd('.', ',', ')', ']', '}'))
+                            } else Toast.makeText(context, "Clipboard is empty", Toast.LENGTH_SHORT).show()
+                        },
+                        onClear = {
+                            setActiveUrl("")
+                            instagramItems = emptyList()
+                            selectedItems = emptySet()
+                            youtubeInfo = null
+                            errorText = null
+                            infoText = null
+                        },
+                        onFetch = fetchCurrent,
+                        onToggleItem = { index -> selectedItems = if (index in selectedItems) selectedItems - index else selectedItems + index },
+                        onSelectAll = { selectedItems = instagramItems.indices.toSet() },
+                        onSelectNone = { selectedItems = emptySet() },
+                        onSaveInstagram = {
+                            if (selectedItems.isEmpty()) errorText = "Select at least one item first."
+                            else scope.launch {
+                                isSaving = true
+                                errorText = null
+                                val selected = instagramItems.filterIndexed { idx, _ -> idx in selectedItems }
+                                val result = runCatching {
+                                    withContext(Dispatchers.IO) { selected.forEach { saveToDownloads(it, context, settings) } }
                                 }
-                            },
-                            onCopyCaption = { copyText("Caption", media.firstOrNull()?.meta?.caption.orEmpty()) },
-                            onCopyHashtags = { copyText("Hashtags", extractHashtags(media.firstOrNull()?.meta?.caption.orEmpty())) },
-                            onCopyFull = { copyText("Full caption", media.firstOrNull()?.meta?.caption.orEmpty()) },
-                            onOpenCaptionLab = {
-                                captionDraft = media.firstOrNull()?.meta?.caption.orEmpty()
-                                destination = ToolkitDestination.CAPTION
+                                isSaving = false
+                                result.onSuccess {
+                                    val title = selected.firstOrNull()?.meta?.caption?.lineSequence()?.firstOrNull()?.take(64)
+                                        ?.ifBlank { null } ?: selected.firstOrNull()?.baseName ?: "Instagram media"
+                                    addLibraryEntry(context, RexSavedItem(title, instagramUrl.trim(), selected.size, System.currentTimeMillis(), "Instagram"))
+                                    libraryRefresh++
+                                    infoText = "Saved ${selected.size} ${if (selected.size == 1) "item" else "items"}"
+                                    Toast.makeText(context, "Saved to Downloads/InstaDownload", Toast.LENGTH_LONG).show()
+                                }.onFailure { errorText = it.message ?: "Saving failed. Try again." }
                             }
-                        )
-                    } else if (!loading) QuickTipsPanel()
+                        },
+                        onSaveYouTubeLink = {
+                            youtubeInfo?.let { info ->
+                                addLibraryEntry(context, RexSavedItem(info.title, info.canonicalUrl, 1, System.currentTimeMillis(), "YouTube"))
+                                libraryRefresh++
+                                infoText = "Video link saved to Library"
+                            }
+                        },
+                        onOpenYouTube = { youtubeInfo?.let { openExternal(it.canonicalUrl) } },
+                        onCopy = copyToClipboard,
+                        onOpenCaptions = { tab = RexTab.CAPTION },
+                        onResetStatus = { errorText = null; infoText = null }
+                    )
+                    RexTab.LIBRARY -> RexLibraryScreen(
+                        refreshKey = libraryRefresh,
+                        onCopy = { copyToClipboard("Source link", it) },
+                        onOpen = openExternal,
+                        onClear = { clearLibrary(context); libraryRefresh++ }
+                    )
+                    RexTab.CAPTION -> RexCaptionLabScreen(
+                        text = captionText,
+                        onTextChange = { captionText = it },
+                        onCopy = copyToClipboard
+                    )
+                    RexTab.SETTINGS -> RexSettingsScreen(
+                        themeChoice = themeChoice,
+                        quality = quality,
+                        haptics = haptics,
+                        customWidth = customWidth,
+                        folderName = folderName,
+                        onThemeChoice = onThemeChoice,
+                        onQuality = { quality = it; settings.quality = it },
+                        onHaptics = { haptics = it; settings.hapticsEnabled = it },
+                        onCustomWidth = { customWidth = it; settings.customWidth = it },
+                        onChooseFolder = onChooseFolder,
+                        onOpen = openExternal
+                    )
                 }
-                ToolkitDestination.LIBRARY -> LibraryPanel(
-                    refreshKey = historyVersion,
-                    onCopyLink = { copyText("Instagram link", it) },
-                    onClear = { clearHistory(context); historyVersion++ }
-                )
-                ToolkitDestination.CAPTION -> CaptionLabPanel(
-                    caption = captionDraft,
-                    onCaptionChange = { captionDraft = it },
-                    onCopy = copyText
-                )
-                ToolkitDestination.SETTINGS -> SettingsPanel(
-                    selectedTheme = selectedTheme,
-                    quality = quality,
-                    haptics = haptics,
-                    customWidth = customWidth,
-                    selectedFolderName = selectedFolderName,
-                    onThemeChanged = onThemeChanged,
-                    onQualityChanged = { quality = it; settings.quality = it },
-                    onHapticsChanged = { haptics = it; settings.hapticsEnabled = it },
-                    onCustomWidthChanged = { customWidth = it; settings.customWidth = it },
-                    onChooseFolder = onChooseFolder
-                )
             }
-            Text(
-                "InstaTube Toolkit  •  by XboidX  •  v1.1.0",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.fillMaxWidth()
-            )
         }
     }
 }
 
 @Composable
-private fun AppTopBar(onSettings: () -> Unit, onHome: () -> Unit) {
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+private fun RexTopBar(onGitHub: () -> Unit, onCreator: () -> Unit, onSettings: () -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(top = 9.dp, bottom = 3.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
         Box(
-            Modifier.size(48.dp).clip(RoundedCornerShape(16.dp))
-                .background(Brush.linearGradient(listOf(XPink, XCoral, XViolet))).clickable(onClick = onHome),
+            modifier = Modifier.size(44.dp).clip(RoundedCornerShape(14.dp))
+                .background(Brush.linearGradient(listOf(RexAccent, RexViolet, RexCoral))),
             contentAlignment = Alignment.Center
         ) {
-            Icon(AppIcons.Download, contentDescription = "InstaTube home", tint = Color.White, modifier = Modifier.size(27.dp))
+            Text("IT", color = Color.White, fontWeight = FontWeight.Black, style = MaterialTheme.typography.titleMedium)
         }
-        Spacer(Modifier.width(12.dp))
-        Column(Modifier.weight(1f)) {
-            Text("INSTAtUBE", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold)
-            Text("Toolkit", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.width(11.dp))
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
+            Text("InstaTube", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, maxLines = 1)
+            Text("Built by Xboy Rex", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        Surface(shape = CircleShape, color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)) {
-            IconButton(onClick = onSettings, modifier = Modifier.size(46.dp)) {
-                Icon(AppIcons.Settings, contentDescription = "Open settings", tint = MaterialTheme.colorScheme.onSurface)
-            }
+        TextButton(onClick = onGitHub, contentPadding = PaddingValues(horizontal = 8.dp)) { Text("GitHub", color = RexAccent, fontWeight = FontWeight.SemiBold) }
+        IconButton(onClick = onCreator) {
+            Text("YT", color = RexAccent, fontWeight = FontWeight.Black, style = MaterialTheme.typography.labelLarge)
         }
+        IconButton(onClick = onSettings) { Icon(AppIcons.Settings, contentDescription = "Settings") }
     }
 }
 
 @Composable
-private fun HeroPanel() {
-    Box(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(28.dp))
-            .background(Brush.linearGradient(listOf(Color(0xFF32183F), Color(0xFF6B1E53), Color(0xFF9E3157))))
-            .padding(22.dp)
-    ) {
-        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Surface(color = Color.White.copy(alpha = 0.12f), shape = RoundedCornerShape(50)) {
-                Text("PUBLIC INSTAGRAM MEDIA", Modifier.padding(horizontal = 12.dp, vertical = 7.dp), color = Color.White, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
-            }
-            Text("Keep the posts\nyou want to keep.", style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.ExtraBold, color = Color.White))
-            Text("Reels, photos and carousels — preview first, then save only what you need.", style = MaterialTheme.typography.bodyMedium, color = Color.White.copy(alpha = 0.82f))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
-                FeaturePill("Preview first"); FeaturePill("Caption tools"); FeaturePill("Local history")
-            }
-        }
-    }
-}
-
-@Composable
-private fun FeaturePill(label: String) {
-    Surface(color = Color.White.copy(alpha = 0.12f), shape = RoundedCornerShape(50)) {
-        Text(label, style = MaterialTheme.typography.labelSmall, color = Color.White, modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp))
-    }
-}
-
-@Composable
-private fun LinkInputCard(
-    url: String, onUrlChange: (String) -> Unit, loading: Boolean,
-    onPaste: () -> Unit, onClear: () -> Unit, onFetch: () -> Unit
-) {
-    Card(
-        modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(24.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
-    ) {
-        Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Add a link", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                Text("01 / FETCH", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold)
-            }
-            OutlinedTextField(
-                value = url, onValueChange = onUrlChange, modifier = Modifier.fillMaxWidth(),
-                label = { Text("Instagram URL") }, placeholder = { Text("Paste a Reel, post or carousel link") },
-                leadingIcon = { Icon(AppIcons.PlayArrow, contentDescription = null, tint = XPink) },
-                trailingIcon = {
-                    Row {
-                        IconButton(onClick = onPaste) { Icon(AppIcons.ContentPaste, contentDescription = "Paste link", tint = XPink) }
-                        if (url.isNotBlank()) IconButton(onClick = onClear) {
-                            Text("×", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                    }
-                },
-                minLines = 1, maxLines = 3, shape = RoundedCornerShape(17.dp)
-            )
-            Button(
-                onClick = onFetch, modifier = Modifier.fillMaxWidth().height(54.dp), enabled = !loading,
-                shape = RoundedCornerShape(17.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = XPink, contentColor = Color.White)
-            ) {
-                if (loading) {
-                    CircularProgressIndicator(Modifier.size(20.dp), color = Color.White, strokeWidth = 2.dp)
-                    Spacer(Modifier.width(10.dp)); Text("Checking public media…")
-                } else {
-                    Icon(AppIcons.PlayArrow, contentDescription = null); Spacer(Modifier.width(8.dp))
-                    Text("Fetch media", fontWeight = FontWeight.Bold)
-                }
-            }
-            Text(
-                "Only public links that Instagram exposes are supported. Private or login-gated content won't be bypassed.",
-                color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall
-            )
-        }
-    }
-}
-
-@Composable
-private fun FeedbackBanner(message: String, isError: Boolean) {
+private fun RexBottomBar(selected: RexTab, onSelect: (RexTab) -> Unit) {
     Surface(
-        shape = RoundedCornerShape(16.dp),
-        color = if (isError) MaterialTheme.colorScheme.errorContainer else Color(0xFF183B30),
-        modifier = Modifier.fillMaxWidth()
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.98f),
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        tonalElevation = 4.dp,
+        shadowElevation = 9.dp
     ) {
-        Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text(if (isError) "!" else "✓", color = if (isError) MaterialTheme.colorScheme.onErrorContainer else Color(0xFF8BE4BD), fontWeight = FontWeight.Bold)
-            Spacer(Modifier.width(10.dp))
-            Text(message, color = if (isError) MaterialTheme.colorScheme.onErrorContainer else Color(0xFFB9F2D8), style = MaterialTheme.typography.bodySmall)
+        Row(
+            modifier = Modifier.fillMaxWidth().navigationBarsPadding().padding(start = 8.dp, end = 8.dp, top = 7.dp, bottom = 3.dp),
+            horizontalArrangement = Arrangement.SpaceEvenly,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            RexTab.values().forEach { destination ->
+                val selectedNow = selected == destination
+                val icon = when (destination) {
+                    RexTab.HOME -> AppIcons.PlayArrow
+                    RexTab.LIBRARY -> AppIcons.Image
+                    RexTab.CAPTION -> AppIcons.ContentCopy
+                    RexTab.SETTINGS -> AppIcons.Settings
+                }
+                Column(
+                    modifier = Modifier.weight(1f).clip(RoundedCornerShape(15.dp)).clickable { onSelect(destination) }
+                        .padding(vertical = 5.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(3.dp)
+                ) {
+                    Box(
+                        modifier = Modifier.width(47.dp).height(29.dp).clip(RoundedCornerShape(10.dp))
+                            .background(if (selectedNow) RexAccent.copy(alpha = 0.14f) else Color.Transparent),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(icon, contentDescription = destination.label, tint = if (selectedNow) RexAccent else MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(21.dp))
+                    }
+                    Text(destination.label, style = MaterialTheme.typography.labelSmall, maxLines = 1,
+                        fontWeight = if (selectedNow) FontWeight.Bold else FontWeight.Normal,
+                        color = if (selectedNow) RexAccent else MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
         }
     }
 }
 
 @Composable
-private fun MediaResultPanel(
-    items: List<MediaResult>, selectedIndices: Set<Int>, onToggle: (Int) -> Unit,
-    onSelectAll: () -> Unit, onSelectNone: () -> Unit, saving: Boolean,
-    onDownload: () -> Unit, onCopyCaption: () -> Unit, onCopyHashtags: () -> Unit,
-    onCopyFull: () -> Unit, onOpenCaptionLab: () -> Unit
+private fun RexHomeScreen(
+    source: MediaSource,
+    onSourceChange: (MediaSource) -> Unit,
+    activeUrl: String,
+    onUrlChange: (String) -> Unit,
+    isFetching: Boolean,
+    isSaving: Boolean,
+    errorText: String?,
+    infoText: String?,
+    instagramItems: List<MediaResult>,
+    selectedItems: Set<Int>,
+    youtubeInfo: YouTubeMetadata?,
+    onPaste: () -> Unit,
+    onClear: () -> Unit,
+    onFetch: () -> Unit,
+    onToggleItem: (Int) -> Unit,
+    onSelectAll: () -> Unit,
+    onSelectNone: () -> Unit,
+    onSaveInstagram: () -> Unit,
+    onSaveYouTubeLink: () -> Unit,
+    onOpenYouTube: () -> Unit,
+    onCopy: (String, String) -> Unit,
+    onOpenCaptions: () -> Unit,
+    onResetStatus: () -> Unit
 ) {
-    Card(
-        Modifier.fillMaxWidth(), shape = RoundedCornerShape(26.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = 3.dp)
+    Column(
+        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(bottom = 18.dp),
+        verticalArrangement = Arrangement.spacedBy(17.dp)
     ) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(13.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text("Preview & save", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                    Text(items.size.toString() + if (items.size == 1) " media item" else " media items", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+            Text("Your media, organized.", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+            Text("A clean space for public links, previews and captions.", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
+        }
+        RexSegmentedSources(selected = source, onSelect = { onResetStatus(); onSourceChange(it) })
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            color = MaterialTheme.colorScheme.surface,
+            shape = RoundedCornerShape(24.dp),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+        ) {
+            Column(Modifier.padding(17.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(if (source == MediaSource.INSTAGRAM) "Instagram link" else "YouTube link", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                        Text(if (source == MediaSource.INSTAGRAM) "Post · Reel · carousel · public profile" else "Video · Shorts · youtu.be", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Text("PASTE LINK", style = MaterialTheme.typography.labelSmall, color = RexAccent, fontWeight = FontWeight.Bold)
                 }
-                Surface(color = Color(0x1FFF4F91), shape = RoundedCornerShape(50)) {
-                    Text(selectedIndices.size.toString() + " selected", Modifier.padding(horizontal = 11.dp, vertical = 7.dp), color = XPink, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+                TextField(
+                    value = activeUrl,
+                    onValueChange = onUrlChange,
+                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = { Text(if (source == MediaSource.INSTAGRAM) "instagram.com/reel/..." else "youtube.com/watch?v=...") },
+                    leadingIcon = { Icon(if (source == MediaSource.INSTAGRAM) AppIcons.Image else AppIcons.PlayArrow, contentDescription = null, tint = RexAccent) },
+                    trailingIcon = {
+                        Row {
+                            IconButton(onClick = onPaste) { Icon(AppIcons.ContentPaste, contentDescription = "Paste link", tint = RexAccent) }
+                            if (activeUrl.isNotBlank()) IconButton(onClick = onClear) { Text("×", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                        }
+                    },
+                    shape = RoundedCornerShape(16.dp),
+                    minLines = 1,
+                    maxLines = 3,
+                    colors = TextFieldDefaults.colors(
+                        focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+                        unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+                        focusedIndicatorColor = Color.Transparent,
+                        unfocusedIndicatorColor = Color.Transparent,
+                        disabledIndicatorColor = Color.Transparent
+                    )
+                )
+                Button(
+                    onClick = onFetch,
+                    enabled = !isFetching && !isSaving,
+                    modifier = Modifier.fillMaxWidth().height(52.dp),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = RexAccent, contentColor = Color.White)
+                ) {
+                    if (isFetching) {
+                        CircularProgressIndicator(modifier = Modifier.size(19.dp), color = Color.White, strokeWidth = 2.dp)
+                        Spacer(Modifier.width(9.dp)); Text("Checking link…")
+                    } else {
+                        Icon(AppIcons.PlayArrow, contentDescription = null); Spacer(Modifier.width(8.dp)); Text("Preview link", fontWeight = FontWeight.Bold)
+                    }
+                }
+                Text(
+                    if (source == MediaSource.INSTAGRAM)
+                        "Public media only. Instagram may limit metadata or change its response."
+                    else
+                        "Loads public title, channel and thumbnail when available. Playback stays on YouTube; no protected-stream extraction.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+        if (isFetching) LinearProgressIndicator(modifier = Modifier.fillMaxWidth(), color = RexAccent)
+        errorText?.let { RexMessage(text = it, isError = true) }
+        infoText?.let { RexMessage(text = it, isError = false) }
+
+        if (source == MediaSource.INSTAGRAM && instagramItems.isNotEmpty()) {
+            RexInstagramResults(
+                media = instagramItems,
+                selected = selectedItems,
+                isSaving = isSaving,
+                onToggle = onToggleItem,
+                onSelectAll = onSelectAll,
+                onSelectNone = onSelectNone,
+                onSave = onSaveInstagram,
+                onCopy = onCopy,
+                onOpenCaptions = onOpenCaptions
+            )
+        } else if (source == MediaSource.YOUTUBE && youtubeInfo != null) {
+            RexYouTubeResult(info = youtubeInfo, onOpen = onOpenYouTube, onCopy = onCopy, onSave = onSaveYouTubeLink)
+        } else if (!isFetching && errorText == null) {
+            RexQuickStart(source = source)
+        }
+    }
+}
+
+@Composable
+private fun RexSegmentedSources(selected: MediaSource, onSelect: (MediaSource) -> Unit) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+        shape = RoundedCornerShape(14.dp)
+    ) {
+        Row(Modifier.padding(4.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            MediaSource.values().forEach { item ->
+                val active = item == selected
+                Surface(
+                    modifier = Modifier.weight(1f).clickable { onSelect(item) },
+                    color = if (active) MaterialTheme.colorScheme.surface else Color.Transparent,
+                    shape = RoundedCornerShape(11.dp),
+                    shadowElevation = if (active) 1.dp else 0.dp
+                ) {
+                    Row(Modifier.padding(vertical = 11.dp), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+                        Icon(if (item == MediaSource.INSTAGRAM) AppIcons.Image else AppIcons.PlayArrow, contentDescription = null, modifier = Modifier.size(17.dp), tint = if (active) RexAccent else MaterialTheme.colorScheme.onSurfaceVariant)
+                        Spacer(Modifier.width(7.dp))
+                        Text(item.label, style = MaterialTheme.typography.labelLarge, color = if (active) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = if (active) FontWeight.Bold else FontWeight.Medium)
+                    }
                 }
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                OutlinedButton(onClick = onSelectAll, modifier = Modifier.weight(1f), shape = RoundedCornerShape(14.dp)) { Text("Select all") }
-                OutlinedButton(onClick = onSelectNone, modifier = Modifier.weight(1f), shape = RoundedCornerShape(14.dp)) { Text("Clear selection") }
+        }
+    }
+}
+
+@Composable
+private fun RexMessage(text: String, isError: Boolean) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = if (isError) MaterialTheme.colorScheme.errorContainer else Color(0xFF193C30),
+        shape = RoundedCornerShape(15.dp)
+    ) {
+        Row(Modifier.padding(13.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(if (isError) "!" else "✓", fontWeight = FontWeight.Bold, color = if (isError) MaterialTheme.colorScheme.onErrorContainer else Color(0xFF9BE4C2))
+            Spacer(Modifier.width(10.dp))
+            Text(text, style = MaterialTheme.typography.bodySmall, color = if (isError) MaterialTheme.colorScheme.onErrorContainer else Color(0xFFD0F5E2))
+        }
+    }
+}
+
+@Composable
+private fun RexInstagramResults(
+    media: List<MediaResult>, selected: Set<Int>, isSaving: Boolean,
+    onToggle: (Int) -> Unit, onSelectAll: () -> Unit, onSelectNone: () -> Unit,
+    onSave: () -> Unit, onCopy: (String, String) -> Unit, onOpenCaptions: () -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text("Preview", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                Text("${media.size} ${if (media.size == 1) "item" else "items"} available", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
             }
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp), contentPadding = PaddingValues(end = 3.dp)) {
-                itemsIndexed(items) { index, item -> MediaPreviewTile(item, index, index in selectedIndices) { onToggle(index) } }
-            }
-            val caption = items.firstOrNull()?.meta?.caption.orEmpty()
-            if (caption.isNotBlank()) {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("CAPTION", style = MaterialTheme.typography.labelMedium, color = XPink, fontWeight = FontWeight.Bold)
+            Text("${selected.size} selected", color = RexAccent, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+            OutlinedButton(onClick = onSelectAll, modifier = Modifier.weight(1f), shape = RoundedCornerShape(13.dp)) { Text("Select all") }
+            OutlinedButton(onClick = onSelectNone, modifier = Modifier.weight(1f), shape = RoundedCornerShape(13.dp)) { Text("Clear") }
+        }
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(11.dp), contentPadding = PaddingValues(end = 2.dp)) {
+            itemsIndexed(media) { index, item -> RexMediaTile(item, index, index in selected) { onToggle(index) } }
+        }
+        val caption = media.firstOrNull()?.meta?.caption.orEmpty()
+        if (caption.isNotBlank()) {
+            Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(21.dp), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))) {
+                Column(Modifier.padding(15.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("CAPTION", style = MaterialTheme.typography.labelMedium, color = RexAccent, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                        Text("${caption.length} chars", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                     Text(caption, style = MaterialTheme.typography.bodyMedium, maxLines = 5, overflow = TextOverflow.Ellipsis)
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedButton(onClick = onCopyCaption, modifier = Modifier.weight(1f), shape = RoundedCornerShape(14.dp), contentPadding = PaddingValues(horizontal = 8.dp)) {
-                            Icon(AppIcons.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp)); Spacer(Modifier.width(5.dp)); Text("Caption", maxLines = 1)
+                        OutlinedButton(onClick = { onCopy("Caption", caption) }, modifier = Modifier.weight(1f), shape = RoundedCornerShape(13.dp), contentPadding = PaddingValues(horizontal = 7.dp)) {
+                            Icon(AppIcons.ContentCopy, null, Modifier.size(16.dp)); Spacer(Modifier.width(5.dp)); Text("Caption")
                         }
-                        OutlinedButton(onClick = onCopyHashtags, modifier = Modifier.weight(1f), shape = RoundedCornerShape(14.dp), contentPadding = PaddingValues(horizontal = 8.dp)) {
-                            Text("#", fontWeight = FontWeight.Bold); Spacer(Modifier.width(5.dp)); Text("Hashtags", maxLines = 1)
+                        OutlinedButton(onClick = { onCopy("Hashtags", hashtagsOrSuggestions(caption)) }, modifier = Modifier.weight(1f), shape = RoundedCornerShape(13.dp), contentPadding = PaddingValues(horizontal = 7.dp)) {
+                            Text("#", fontWeight = FontWeight.Bold); Spacer(Modifier.width(5.dp)); Text("Hashtags")
                         }
                     }
-                    OutlinedButton(onClick = onCopyFull, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp)) { Text("Copy full caption") }
-                    TextButton(onClick = onOpenCaptionLab) { Text("Open Caption Lab →", color = XPink) }
+                    OutlinedButton(onClick = { onCopy("Full caption", caption) }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(13.dp)) { Text("Copy full caption") }
+                    TextButton(onClick = onOpenCaptions, contentPadding = PaddingValues(0.dp)) { Text("Open Caption Studio →", color = RexAccent) }
                 }
             }
-            Button(
-                onClick = onDownload, modifier = Modifier.fillMaxWidth().height(54.dp),
-                enabled = !saving && selectedIndices.isNotEmpty(), shape = RoundedCornerShape(17.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = XPink, contentColor = Color.White)
-            ) {
-                if (saving) {
-                    CircularProgressIndicator(Modifier.size(20.dp), color = Color.White, strokeWidth = 2.dp)
-                    Spacer(Modifier.width(10.dp)); Text("Saving media…")
-                } else {
-                    Icon(AppIcons.Download, contentDescription = null); Spacer(Modifier.width(8.dp))
-                    Text("Save " + selectedIndices.size + if (selectedIndices.size == 1) " item" else " items", fontWeight = FontWeight.Bold)
-                }
-            }
+        }
+        Button(
+            onClick = onSave, enabled = !isSaving && selected.isNotEmpty(),
+            modifier = Modifier.fillMaxWidth().height(53.dp), shape = RoundedCornerShape(16.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = RexAccent, contentColor = Color.White)
+        ) {
+            if (isSaving) { CircularProgressIndicator(Modifier.size(19.dp), color = Color.White, strokeWidth = 2.dp); Spacer(Modifier.width(9.dp)); Text("Saving…") }
+            else { Icon(AppIcons.Download, null); Spacer(Modifier.width(8.dp)); Text("Save ${selected.size} ${if (selected.size == 1) "item" else "items"}", fontWeight = FontWeight.Bold) }
         }
     }
 }
 
 @Composable
-private fun MediaPreviewTile(item: MediaResult, index: Int, selected: Boolean, onClick: () -> Unit) {
+private fun RexMediaTile(item: MediaResult, index: Int, selected: Boolean, onClick: () -> Unit) {
     var preview by remember(item.previewUrl) { mutableStateOf<ImageBitmap?>(null) }
-    var previewFailed by remember(item.previewUrl) { mutableStateOf(false) }
+    var failed by remember(item.previewUrl) { mutableStateOf(false) }
     LaunchedEffect(item.previewUrl) {
-        val imageUrl = item.previewUrl ?: return@LaunchedEffect
-        val bitmap = runCatching {
+        val url = item.previewUrl ?: return@LaunchedEffect
+        preview = runCatching {
             withContext(Dispatchers.IO) {
-                val bytes = InstagramDownloader.fetchBytes(imageUrl)
+                val bytes = InstagramDownloader.fetchBytes(url)
                 BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
             }
         }.getOrNull()
-        preview = bitmap
-        previewFailed = bitmap == null
+        failed = preview == null
     }
     Card(
-        Modifier.width(174.dp).clickable(onClick = onClick),
-        shape = RoundedCornerShape(20.dp),
-        border = BorderStroke(if (selected) 2.dp else 1.dp, if (selected) XPink else MaterialTheme.colorScheme.outlineVariant),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)
+        modifier = Modifier.width(156.dp).clickable(onClick = onClick),
+        shape = RoundedCornerShape(18.dp),
+        border = BorderStroke(if (selected) 2.dp else 1.dp, if (selected) RexAccent else MaterialTheme.colorScheme.outlineVariant),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
     ) {
         Column {
-            Box(
-                Modifier.fillMaxWidth().height(218.dp).background(Brush.linearGradient(listOf(Color(0xFF28162E), Color(0xFF4A2039)))),
-                contentAlignment = Alignment.Center
-            ) {
-                if (preview != null) Image(preview!!, contentDescription = if (item.isVideo) "Video preview" else "Image preview", modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
-                else Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Icon(if (item.isVideo) AppIcons.PlayArrow else AppIcons.Image, contentDescription = null, tint = Color.White.copy(alpha = 0.86f), modifier = Modifier.size(34.dp))
-                    Text(if (previewFailed) "Preview unavailable" else "Loading preview…", color = Color.White.copy(alpha = 0.72f), style = MaterialTheme.typography.labelSmall)
+            Box(Modifier.fillMaxWidth().height(190.dp).background(MaterialTheme.colorScheme.surfaceVariant), contentAlignment = Alignment.Center) {
+                if (preview != null) Image(preview!!, contentDescription = "Media preview ${index + 1}", modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                else Text(if (failed) "Preview unavailable" else "Loading…", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Surface(Modifier.align(Alignment.TopEnd).padding(7.dp), color = if (selected) RexAccent else Color.Black.copy(alpha = .65f), shape = CircleShape) {
+                    Text(if (selected) "✓" else "${index + 1}", Modifier.padding(horizontal = 8.dp, vertical = 5.dp), color = Color.White, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
                 }
-                Surface(Modifier.align(Alignment.TopEnd).padding(8.dp), color = if (selected) XPink else Color.Black.copy(alpha = 0.65f), shape = CircleShape) {
-                    Text(if (selected) "✓" else (index + 1).toString(), color = Color.White, modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp), style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
-                }
-                if (item.isVideo) Surface(Modifier.align(Alignment.BottomStart).padding(8.dp), color = Color.Black.copy(alpha = 0.65f), shape = RoundedCornerShape(8.dp)) {
-                    Text("VIDEO", color = Color.White, modifier = Modifier.padding(horizontal = 7.dp, vertical = 4.dp), style = MaterialTheme.typography.labelSmall)
+                if (item.isVideo) Surface(Modifier.align(Alignment.BottomStart).padding(7.dp), color = Color.Black.copy(alpha = .70f), shape = RoundedCornerShape(6.dp)) {
+                    Text("VIDEO", Modifier.padding(horizontal = 6.dp, vertical = 4.dp), color = Color.White, style = MaterialTheme.typography.labelSmall)
                 }
             }
             Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                Text(if (item.isVideo) "Video / Reel" else "Photo", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
-                Text(if (item.width > 0 && item.height > 0) item.width.toString() + " × " + item.height else "Resolution varies", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(if (item.isVideo) "Video / Reel" else "Photo", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+                Text(if (item.width > 0 && item.height > 0) "${item.width} × ${item.height}" else "Original size", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     }
 }
 
 @Composable
-private fun QuickTipsPanel() {
-    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text("Made for quick saves", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            TipCard("01", "Paste a link", "Copy a public Instagram post or Reel URL.", Modifier.weight(1f))
-            TipCard("02", "Preview first", "Choose carousel items before saving.", Modifier.weight(1f))
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            TipCard("03", "Copy caption", "Keep caption text and hashtags ready to reuse.", Modifier.weight(1f))
-            TipCard("04", "Stay organized", "Find recent saves in your local library.", Modifier.weight(1f))
+private fun RexYouTubeResult(info: YouTubeMetadata, onOpen: () -> Unit, onCopy: (String, String) -> Unit, onSave: () -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text("Video preview", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+        Surface(
+            modifier = Modifier.fillMaxWidth(), color = MaterialTheme.colorScheme.surface,
+            shape = RoundedCornerShape(22.dp), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = .45f))
+        ) {
+            Column {
+                RexRemoteThumbnail(url = info.thumbnailUrl, description = "YouTube video thumbnail", modifier = Modifier.fillMaxWidth().height(205.dp))
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("YOUTUBE VIDEO", style = MaterialTheme.typography.labelSmall, color = RexAccent, fontWeight = FontWeight.Bold)
+                    Text(info.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Text(info.author, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("Metadata is provided by YouTube's public oEmbed response. Views and duration aren't included in this response.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Button(onClick = onOpen, modifier = Modifier.fillMaxWidth().height(49.dp), shape = RoundedCornerShape(14.dp), colors = ButtonDefaults.buttonColors(containerColor = RexAccent, contentColor = Color.White)) {
+                        Icon(AppIcons.PlayArrow, null); Spacer(Modifier.width(8.dp)); Text("Open in YouTube", fontWeight = FontWeight.Bold)
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(onClick = { onCopy("YouTube link", info.canonicalUrl) }, modifier = Modifier.weight(1f), shape = RoundedCornerShape(13.dp)) { Text("Copy link") }
+                        OutlinedButton(onClick = onSave, modifier = Modifier.weight(1f), shape = RoundedCornerShape(13.dp)) { Text("Save to Library") }
+                    }
+                }
+            }
         }
     }
 }
 
 @Composable
-private fun TipCard(number: String, title: String, body: String, modifier: Modifier = Modifier) {
-    Card(modifier, shape = RoundedCornerShape(18.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
-        Column(Modifier.padding(13.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-            Text(number, color = XPink, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.ExtraBold)
-            Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
-            Text(body, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+private fun RexRemoteThumbnail(url: String, description: String, modifier: Modifier = Modifier) {
+    var bitmap by remember(url) { mutableStateOf<ImageBitmap?>(null) }
+    LaunchedEffect(url) {
+        bitmap = runCatching {
+            withContext(Dispatchers.IO) {
+                val client = okhttp3.OkHttpClient.Builder().callTimeout(15, java.util.concurrent.TimeUnit.SECONDS).build()
+                val req = okhttp3.Request.Builder().url(url).get().build()
+                client.newCall(req).execute().use { response ->
+                    if (!response.isSuccessful) error("Thumbnail unavailable")
+                    val bytes = response.body?.bytes() ?: error("Empty thumbnail")
+                    BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
+                }
+            }
+        }.getOrNull()
+    }
+    Box(modifier.background(MaterialTheme.colorScheme.surfaceVariant), contentAlignment = Alignment.Center) {
+        if (bitmap != null) Image(bitmap!!, description, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+        else Icon(AppIcons.PlayArrow, description, tint = RexAccent, modifier = Modifier.size(42.dp))
+    }
+}
+
+@Composable
+private fun RexQuickStart(source: MediaSource) {
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text(if (source == MediaSource.INSTAGRAM) "Simple by design" else "YouTube, neatly organized", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+        RexTip("01", if (source == MediaSource.INSTAGRAM) "Paste a public post" else "Paste a video URL", if (source == MediaSource.INSTAGRAM) "Reels, photos, carousels and public profile pictures." else "Watch links, Shorts and youtu.be links are supported.")
+        RexTip("02", "Preview before acting", if (source == MediaSource.INSTAGRAM) "Select just the carousel items you need." else "See the public title, channel name and thumbnail before opening the video.")
+        RexTip("03", "Keep your text", "Copy captions or hashtags and find saved links in your local Library.")
+    }
+}
+
+@Composable
+private fun RexTip(number: String, title: String, body: String) {
+    Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(17.dp), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = .42f))) {
+        Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.Top) {
+            Text(number, style = MaterialTheme.typography.labelLarge, color = RexAccent, fontWeight = FontWeight.Bold, modifier = Modifier.width(28.dp))
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                Text(body, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
         }
     }
 }
 
 @Composable
-private fun LibraryPanel(refreshKey: Int, onCopyLink: (String) -> Unit, onClear: () -> Unit) {
+private fun RexLibraryScreen(refreshKey: Int, onCopy: (String) -> Unit, onOpen: (String) -> Unit, onClear: () -> Unit) {
     val context = LocalContext.current
-    val entries = remember(refreshKey) { loadHistory(context) }
-    Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text("Your Library", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-            Text("Recent saves are stored locally on this device.", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
-        }
-        if (entries.isEmpty()) EmptyStateCard("Nothing saved yet", "Fetch a public post and save it. Your recent activity will appear here.", AppIcons.Image)
-        else {
+    val entries = remember(refreshKey) { loadLibrary(context) }
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(bottom = 16.dp), verticalArrangement = Arrangement.spacedBy(13.dp)) {
+        Text("Library", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
+        Text("Your recent links, saved on this device.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        if (entries.isEmpty()) {
+            RexEmptyState("No saved links yet", "Save an Instagram download or add a YouTube video link to start your Library.", AppIcons.Image)
+        } else {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(entries.size.toString() + " recent saves", modifier = Modifier.weight(1f), color = MaterialTheme.colorScheme.onSurfaceVariant)
-                TextButton(onClick = onClear) { Text("Clear history", color = XPink) }
+                Text("${entries.size} recent items", modifier = Modifier.weight(1f), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                TextButton(onClick = onClear) { Text("Clear history", color = RexAccent) }
             }
-            entries.forEach { entry ->
-                Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
-                    Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Box(Modifier.size(44.dp).clip(RoundedCornerShape(14.dp)).background(Brush.linearGradient(listOf(XPink, XViolet))), contentAlignment = Alignment.Center) {
-                            Icon(AppIcons.Download, contentDescription = null, tint = Color.White)
+            entries.forEach { item ->
+                Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(18.dp), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = .4f))) {
+                    Row(Modifier.fillMaxWidth().clickable { onOpen(item.url) }.padding(13.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Box(Modifier.size(45.dp).clip(RoundedCornerShape(13.dp)).background(Brush.linearGradient(listOf(RexAccent, RexViolet))), contentAlignment = Alignment.Center) {
+                            Icon(if (item.source == "YouTube") AppIcons.PlayArrow else AppIcons.Download, null, tint = Color.White)
                         }
                         Spacer(Modifier.width(12.dp))
-                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                            Text(entry.title.ifBlank { "Instagram media" }, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                            Text(entry.count.toString() + if (entry.count == 1) " item saved" else " items saved", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            Text(SimpleDateFormat("dd MMM · hh:mm a", Locale.getDefault()).format(Date(entry.savedAt)), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text(item.title.ifBlank { "Media link" }, maxLines = 2, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold)
+                            Text("${item.source} · ${item.count} ${if (item.count == 1) "item" else "items"}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(SimpleDateFormat("dd MMM · hh:mm a", Locale.getDefault()).format(Date(item.savedAt)), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
-                        IconButton(onClick = { onCopyLink(entry.url) }) { Icon(AppIcons.ContentCopy, contentDescription = "Copy source link", tint = XPink) }
+                        IconButton(onClick = { onCopy(item.url) }) { Icon(AppIcons.ContentCopy, contentDescription = "Copy source link", tint = RexAccent) }
                     }
                 }
             }
-        }
-        Surface(color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f), shape = RoundedCornerShape(16.dp)) {
-            Text("Library history records what you saved in this app; it does not scan files created by other apps.", Modifier.padding(14.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
 
 @Composable
-private fun CaptionLabPanel(caption: String, onCaptionChange: (String) -> Unit, onCopy: (String, String) -> Unit) {
-    val hashtags = remember(caption) { extractHashtags(caption) }
-    Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text("Caption Lab", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-            Text("Edit, extract and copy the text you want to reuse.", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
-        }
-        Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(22.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
-            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                OutlinedTextField(
-                    value = caption, onValueChange = onCaptionChange, modifier = Modifier.fillMaxWidth(),
-                    label = { Text("Caption text") }, placeholder = { Text("Fetch a link first or paste caption text here") },
-                    minLines = 6, maxLines = 14, shape = RoundedCornerShape(16.dp)
-                )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(onClick = { onCopy("Caption", caption.trim()) }, modifier = Modifier.weight(1f), shape = RoundedCornerShape(14.dp)) {
-                        Icon(AppIcons.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp)); Spacer(Modifier.width(5.dp)); Text("Copy caption")
-                    }
-                    OutlinedButton(onClick = { onCopy("Hashtags", hashtags) }, modifier = Modifier.weight(1f), shape = RoundedCornerShape(14.dp)) {
-                        Text("#", fontWeight = FontWeight.Bold); Spacer(Modifier.width(5.dp)); Text("Copy tags")
-                    }
-                }
-                Divider()
-                val literalTagsExist = Regex("(?<![\\w#])#[\\p{L}\\p{N}_]+").containsMatchIn(caption)
-                val keywordBlockExists = Regex("\\{([^{}]+)}\\s*$").containsMatchIn(caption)
-                Text(
-                    when {
-                        literalTagsExist -> "HASHTAGS FOUND"
-                        keywordBlockExists -> "SUGGESTED TAGS FROM KEYWORDS"
-                        else -> "HASHTAGS"
-                    },
-                    style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, color = XPink
-                )
-                if (hashtags.isBlank()) Text("No hashtags or keyword list found in this text yet.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                else {
-                    Text(hashtags, style = MaterialTheme.typography.bodyMedium)
-                    TextButton(onClick = { onCopy("Hashtags", hashtags) }) { Text("Copy only hashtags →", color = XPink) }
-                }
-            }
-        }
-        Text("Caption metadata depends on what Instagram exposes. Literal #hashtags are extracted first; if no literal tags exist, a trailing {comma-separated keyword list} is converted into clearly labelled hashtag suggestions.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-    }
-}
-
-@Composable
-private fun SettingsPanel(
-    selectedTheme: AppTheme, quality: DownloadQuality, haptics: Boolean,
-    customWidth: Int, selectedFolderName: String, onThemeChanged: (AppTheme) -> Unit,
-    onQualityChanged: (DownloadQuality) -> Unit, onHapticsChanged: (Boolean) -> Unit,
-    onCustomWidthChanged: (Int) -> Unit, onChooseFolder: () -> Unit
-) {
-    Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text("Settings", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-            Text("Tune quality, storage and the way the app feels.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        Card(shape = RoundedCornerShape(22.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
-            Column(Modifier.padding(17.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("DOWNLOAD QUALITY", style = MaterialTheme.typography.labelMedium, color = XPink, fontWeight = FontWeight.Bold)
-                DownloadQuality.values().forEach { option ->
-                    Row(
-                        Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable { onQualityChanged(option) }.padding(vertical = 7.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        RadioButton(selected = quality == option, onClick = { onQualityChanged(option) })
-                        Spacer(Modifier.width(9.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text(androidx.compose.ui.res.stringResource(option.labelRes), fontWeight = FontWeight.SemiBold)
-                            Text(androidx.compose.ui.res.stringResource(option.descriptionRes), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
-                        }
-                    }
-                }
-                if (quality == DownloadQuality.CUSTOM) {
-                    Text("Target width: " + customWidth + " px", style = MaterialTheme.typography.labelLarge)
-                    Slider(value = customWidth.toFloat(), onValueChange = { onCustomWidthChanged(it.toInt()) }, valueRange = 320f..1080f, steps = 7)
-                }
-            }
-        }
-        Card(shape = RoundedCornerShape(22.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
-            Column(Modifier.padding(17.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("APPEARANCE", style = MaterialTheme.typography.labelMedium, color = XPink, fontWeight = FontWeight.Bold)
-                AppTheme.values().forEach { option ->
-                    Row(Modifier.fillMaxWidth().clickable { onThemeChanged(option) }.padding(vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
-                        RadioButton(selected = selectedTheme == option, onClick = { onThemeChanged(option) })
-                        Spacer(Modifier.width(9.dp)); Text(androidx.compose.ui.res.stringResource(option.labelRes))
-                    }
-                }
-                Divider()
+private fun RexCaptionLabScreen(text: String, onTextChange: (String) -> Unit, onCopy: (String, String) -> Unit) {
+    // This destination is intentionally self-contained: opening it never triggers a fetch or download.
+    val tags = remember(text) { hashtagsOrSuggestions(text) }
+    val literalHashtags = remember(text) { extractLiteralHashtags(text) }
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(bottom = 18.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        Text("Caption Studio", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
+        Text("Edit your text. Copy exactly what you need.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(22.dp), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = .45f))) {
+            Column(Modifier.padding(15.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text("Haptic feedback", fontWeight = FontWeight.SemiBold)
-                        Text("Vibrate on download events", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
-                    }
-                    Switch(checked = haptics, onCheckedChange = onHapticsChanged)
+                    Text("CAPTION TEXT", style = MaterialTheme.typography.labelMedium, color = RexAccent, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                    Text("${text.length} characters", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = onTextChange,
+                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = { Text("Paste or fetch a caption to edit it here") },
+                    minLines = 6,
+                    maxLines = 12,
+                    shape = RoundedCornerShape(15.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = RexAccent,
+                        cursorColor = RexAccent
+                    )
+                )
+                Button(onClick = { onCopy("Caption", text.trim()) }, modifier = Modifier.fillMaxWidth().height(48.dp), shape = RoundedCornerShape(14.dp), colors = ButtonDefaults.buttonColors(containerColor = RexAccent, contentColor = Color.White)) {
+                    Icon(AppIcons.ContentCopy, null); Spacer(Modifier.width(8.dp)); Text("Copy caption")
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = { onCopy("Hashtags", tags) }, modifier = Modifier.weight(1f), shape = RoundedCornerShape(13.dp)) { Text("Copy hashtags") }
+                    OutlinedButton(onClick = { onCopy("Full caption", text) }, modifier = Modifier.weight(1f), shape = RoundedCornerShape(13.dp)) { Text("Copy full text") }
+                }
+                Divider()
+                Text(if (literalHashtags.isNotBlank()) "HASHTAGS FOUND" else "HASHTAG SUGGESTIONS", style = MaterialTheme.typography.labelMedium, color = RexAccent, fontWeight = FontWeight.Bold)
+                if (tags.isBlank()) {
+                    Text("No #hashtags or trailing {comma-separated keywords} were found.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                } else {
+                    Text(tags, style = MaterialTheme.typography.bodyMedium)
+                    if (literalHashtags.isBlank()) Text("Suggestions are derived from the trailing keyword block; review them before posting.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         }
-        Card(shape = RoundedCornerShape(22.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
-            Column(Modifier.padding(17.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("STORAGE LOCATION", style = MaterialTheme.typography.labelMedium, color = XPink, fontWeight = FontWeight.Bold)
-                Text(selectedFolderName, style = MaterialTheme.typography.bodyMedium)
-                OutlinedButton(onClick = onChooseFolder, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp)) { Text("Choose folder") }
-                Text("Default location: Downloads/InstaDownload", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
-            }
-        }
-        Text("This app works with public media responses only. It does not log in to Instagram or bypass private-content restrictions.", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
     }
 }
 
 @Composable
-private fun EmptyStateCard(title: String, body: String, icon: androidx.compose.ui.graphics.vector.ImageVector) {
-    Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(22.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
-        Column(Modifier.fillMaxWidth().padding(26.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Box(Modifier.size(62.dp).clip(RoundedCornerShape(20.dp)).background(Brush.linearGradient(listOf(XPink, XViolet))), contentAlignment = Alignment.Center) {
-                Icon(icon, contentDescription = null, tint = Color.White, modifier = Modifier.size(30.dp))
+private fun RexSettingsScreen(
+    themeChoice: AppTheme,
+    quality: DownloadQuality,
+    haptics: Boolean,
+    customWidth: Int,
+    folderName: String,
+    onThemeChoice: (AppTheme) -> Unit,
+    onQuality: (DownloadQuality) -> Unit,
+    onHaptics: (Boolean) -> Unit,
+    onCustomWidth: (Int) -> Unit,
+    onChooseFolder: () -> Unit,
+    onOpen: (String) -> Unit
+) {
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(bottom = 18.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        Text("Settings", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
+        Text("Personalize InstaTube for your workflow.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        RexSettingsGroup(title = "DOWNLOAD QUALITY") {
+            DownloadQuality.values().forEach { option ->
+                Row(Modifier.fillMaxWidth().clickable { onQuality(option) }.padding(vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
+                    RadioButton(selected = quality == option, onClick = { onQuality(option) }, colors = RadioButtonDefaults.colors(selectedColor = RexAccent))
+                    Spacer(Modifier.width(8.dp))
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(androidx.compose.ui.res.stringResource(option.labelRes), fontWeight = FontWeight.SemiBold)
+                        Text(androidx.compose.ui.res.stringResource(option.descriptionRes), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
             }
-            Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-            Text(body, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (quality == DownloadQuality.CUSTOM) {
+                Text("Target width · ${customWidth}px", style = MaterialTheme.typography.labelLarge)
+                Slider(value = customWidth.toFloat(), onValueChange = { onCustomWidth(it.toInt()) }, valueRange = 320f..1080f, steps = 7, colors = SliderDefaults.colors(thumbColor = RexAccent, activeTrackColor = RexAccent))
+            }
+        }
+        RexSettingsGroup(title = "APPEARANCE") {
+            AppTheme.values().forEach { option ->
+                Row(Modifier.fillMaxWidth().clickable { onThemeChoice(option) }.padding(vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
+                    RadioButton(selected = themeChoice == option, onClick = { onThemeChoice(option) }, colors = RadioButtonDefaults.colors(selectedColor = RexAccent))
+                    Spacer(Modifier.width(8.dp)); Text(androidx.compose.ui.res.stringResource(option.labelRes))
+                }
+            }
+            Divider()
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text("Haptic feedback", fontWeight = FontWeight.SemiBold)
+                    Text("Vibrate on download events", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Switch(checked = haptics, onCheckedChange = onHaptics, colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = RexAccent))
+            }
+        }
+        RexSettingsGroup(title = "DOWNLOAD LOCATION") {
+            Text(folderName, style = MaterialTheme.typography.bodyMedium)
+            OutlinedButton(onClick = onChooseFolder, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(13.dp)) { Text("Choose folder", color = RexAccent) }
+            Text("Default: Downloads/InstaDownload", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        RexSettingsGroup(title = "ABOUT & LINKS") {
+            RexLinkRow("GitHub profile", "github.com/xboyrex", onClick = { onOpen("https://github.com/xboyrex") })
+            Divider()
+            RexLinkRow("Source repository", "InstaTube Toolkit source code", onClick = { onOpen("https://github.com/xboyrex/instatube-toolkit-by-xboidx") })
+            Divider()
+            RexLinkRow("YouTube", "Search for Xboy Rex", onClick = { onOpen("https://www.youtube.com/results?search_query=Xboy+Rex") })
+            Divider()
+            RexLinkRow("Privacy policy", "What stays on-device and what uses the network", onClick = { onOpen("https://github.com/xboyrex/instatube-toolkit-by-xboidx/blob/main/PRIVACY.md") })
+            Divider()
+            RexLinkRow("Open-source license", "GPL-3.0 · upstream attribution retained", onClick = { onOpen("https://github.com/xboyrex/instatube-toolkit-by-xboidx/blob/main/LICENSE") })
+            Divider()
+            RexLinkRow("Upstream project", "InstaDownload by Orang-Studio", onClick = { onOpen("https://github.com/Orang-Studio/InstaDownload") })
+        }
+        Text("Built by Xboy Rex. Not affiliated with Instagram, Meta or YouTube. Only access and save content you own or have permission to use.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+@Composable
+private fun RexSettingsGroup(title: String, content: @Composable ColumnScope.() -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(title, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, color = RexAccent, modifier = Modifier.padding(start = 3.dp))
+        Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(20.dp), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = .4f))) {
+            Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(7.dp), content = content)
         }
     }
 }
 
-private fun isSupportedInstagramLink(value: String): Boolean {
+@Composable
+private fun RexLinkRow(title: String, subtitle: String, onClick: () -> Unit) {
+    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).clickable(onClick = onClick).padding(vertical = 7.dp), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(title, fontWeight = FontWeight.SemiBold)
+            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Text("↗", color = RexAccent, style = MaterialTheme.typography.titleMedium)
+    }
+}
+
+@Composable
+private fun RexEmptyState(title: String, description: String, icon: androidx.compose.ui.graphics.vector.ImageVector) {
+    Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(20.dp), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = .4f))) {
+        Column(Modifier.fillMaxWidth().padding(25.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(9.dp)) {
+            Box(Modifier.size(55.dp).clip(RoundedCornerShape(17.dp)).background(Brush.linearGradient(listOf(RexAccent, RexViolet))), contentAlignment = Alignment.Center) {
+                Icon(icon, null, tint = Color.White, modifier = Modifier.size(28.dp))
+            }
+            Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            Text(description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+private fun isInstagramLink(value: String): Boolean {
     val uri = runCatching { Uri.parse(value.trim()) }.getOrNull() ?: return false
-    if (uri.scheme != "http" && uri.scheme != "https") return false
-    val host = uri.host?.lowercase(Locale.ROOT) ?: return false
-    if (host !in setOf("instagram.com", "www.instagram.com", "instagr.am", "www.instagr.am")) return false
+    if (uri.scheme !in setOf("http", "https")) return false
+    if (uri.host?.lowercase(Locale.ROOT) !in setOf("instagram.com", "www.instagram.com", "instagr.am", "www.instagr.am")) return false
     val parts = uri.pathSegments
     if (parts.isEmpty()) return false
-    if (parts.first().lowercase(Locale.ROOT) in setOf("p", "reel", "reels", "tv")) return parts.size >= 2
-    if (parts.first().lowercase(Locale.ROOT) in setOf("stories", "explore", "accounts", "direct")) return false
-    return parts.size == 1 && parts.first().isNotBlank()
+    if (parts[0].lowercase(Locale.ROOT) in setOf("p", "reel", "reels", "tv")) return parts.size >= 2
+    if (parts[0].lowercase(Locale.ROOT) in setOf("stories", "explore", "accounts", "direct")) return false
+    return parts.size == 1 && parts[0].isNotBlank()
 }
 
-private fun extractHashtags(text: String): String {
-    val literal = Regex("(?<![\\w#])#[\\p{L}\\p{N}_]+")
-        .findAll(text).map { it.value }.distinct().toList()
-    if (literal.isNotEmpty()) return literal.joinToString(" ")
-
-    // Instagram caption-like payloads sometimes append a brace-wrapped comma-separated keyword list.
-    // Convert those source terms into suggestions only when the caption has no literal hashtags.
-    val keywordBlock = Regex("\\{([^{}]+)}\\s*$").find(text)?.groupValues?.get(1) ?: return ""
-    return keywordBlock.split(',').map { phrase ->
-        val tagBody = phrase.trim().split(Regex("\\s+")).filter { it.isNotBlank() }.joinToString("") { word ->
-            word.replace(Regex("[^\\p{L}\\p{N}_]"), "").replaceFirstChar { it.titlecase(Locale.ROOT) }
-        }
-        if (tagBody.isBlank()) "" else "#" + tagBody
-    }.filter { it.length > 1 }.distinct().joinToString(" ")
+private fun friendlyInstagramError(message: String?): String {
+    val value = message.orEmpty()
+    return when {
+        value.contains("HTTP 429", ignoreCase = true) -> "Instagram is rate-limiting requests. Wait a little and try again."
+        value.contains("UnknownHost", ignoreCase = true) -> "No internet connection. Check your network and try again."
+        value.isNotBlank() -> value
+        else -> "Could not load public media. The post may be private, removed or temporarily unavailable."
+    }
 }
 
-private fun loadHistory(context: Context): List<SavedEntry> = runCatching {
-    val array = JSONArray(context.getSharedPreferences("instatube_toolkit", Context.MODE_PRIVATE).getString("saved_history", "[]"))
+private fun extractLiteralHashtags(text: String): String = runCatching {
+    Regex("(?<![\\w#])#[\\p{L}\\p{N}_]+")
+        .findAll(text).map { it.value }.distinct().joinToString(" ")
+}.getOrDefault("")
+
+private fun hashtagsOrSuggestions(text: String): String {
+    val literal = extractLiteralHashtags(text)
+    if (literal.isNotBlank()) return literal
+    val block = runCatching { Regex("\\{([^{}]+)}\\s*$").find(text)?.groupValues?.getOrNull(1) }.getOrNull().orEmpty()
+    if (block.isBlank()) return ""
+    return block.split(',').mapNotNull { phrase ->
+        val cleaned = phrase.trim().trim('#').replace(Regex("[^\\p{L}\\p{N}_\\s-]"), "").trim()
+        val tag = cleaned.replace(Regex("[\\s-]+"), "")
+        tag.takeIf { it.isNotBlank() }?.let { "#$it" }
+    }.distinct().joinToString(" ")
+}
+
+private fun loadLibrary(context: Context): List<RexSavedItem> = runCatching {
+    val json = context.getSharedPreferences("instatube_rex_library", Context.MODE_PRIVATE).getString("items", "[]")
+    val array = JSONArray(json)
     (0 until array.length()).mapNotNull { index ->
-        val obj = array.optJSONObject(index) ?: return@mapNotNull null
-        SavedEntry(obj.optString("title", "Instagram media"), obj.optString("url"), obj.optInt("count", 1), obj.optLong("savedAt", 0L))
+        val item = array.optJSONObject(index) ?: return@mapNotNull null
+        RexSavedItem(
+            title = item.optString("title", "Media link"),
+            url = item.optString("url"),
+            count = item.optInt("count", 1),
+            savedAt = item.optLong("savedAt", 0L),
+            source = item.optString("source", "Instagram")
+        )
     }
 }.getOrDefault(emptyList())
 
-private fun saveHistory(context: Context, entry: SavedEntry) {
-    val recent = (listOf(entry) + loadHistory(context)).take(12)
+private fun addLibraryEntry(context: Context, item: RexSavedItem) {
+    val recent = (listOf(item) + loadLibrary(context)).distinctBy { it.url }.take(30)
     val array = JSONArray()
-    recent.forEach { item ->
-        array.put(JSONObject().put("title", item.title).put("url", item.url).put("count", item.count).put("savedAt", item.savedAt))
+    recent.forEach { value ->
+        array.put(JSONObject().put("title", value.title).put("url", value.url).put("count", value.count).put("savedAt", value.savedAt).put("source", value.source))
     }
-    context.getSharedPreferences("instatube_toolkit", Context.MODE_PRIVATE).edit().putString("saved_history", array.toString()).apply()
+    context.getSharedPreferences("instatube_rex_library", Context.MODE_PRIVATE).edit().putString("items", array.toString()).apply()
 }
 
-private fun clearHistory(context: Context) {
-    context.getSharedPreferences("instatube_toolkit", Context.MODE_PRIVATE).edit().remove("saved_history").apply()
-}
-
-private fun vibrate(context: Context, enabled: Boolean) {
-    if (!enabled) return
-    runCatching {
-        val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            (context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager).defaultVibrator
-        } else {
-            @Suppress("DEPRECATION")
-            context.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
-        }
-        vibrator.vibrate(VibrationEffect.createOneShot(45L, VibrationEffect.DEFAULT_AMPLITUDE))
-    }
+private fun clearLibrary(context: Context) {
+    context.getSharedPreferences("instatube_rex_library", Context.MODE_PRIVATE).edit().remove("items").apply()
 }

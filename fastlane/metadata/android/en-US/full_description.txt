@@ -1,21 +1,29 @@
-InstaDownload lets you save Instagram reels and photos directly to your Downloads folder — no account required.
-
-Paste any public Instagram reel or post URL and tap Download. The file saves to your Downloads folder.
+InstaTube Toolkit by Xboy Rex is a native Android tool for working with public Instagram links and previewing public YouTube video details.
 
 Features:
-* Download reels as MP4 video files
-* Download photos as JPG image files
-* Paste or share to app for quick URL input
-* Works with instagram.com/reel/, /p/, and /tv/ links
-* No account or login required on main version
-* No ads, no tracking, no analytics
-* Fully open source
+* Preview public Instagram photos, reels and carousels where the source exposes media
+* Choose which carousel items to save
+* Copy available captions and extract hashtags or clearly labelled keyword suggestions
+* Caption Studio with editable text and copy actions
+* Preview YouTube's public title, channel/creator name and thumbnail when available
+* Open YouTube videos in the YouTube app or browser, copy links, and save links to your local Library
+* Local recent-link history with a clear-history action
+* System, light and dark themes; quality and download-folder settings
+* Quick URL input from Android's share menu
+* No app account, ads, analytics or publisher-operated proxy
 
-Permissions:
-* Internet - to fetch the media
-* Storage - to save files (Android 9 and below only)
-* Vibrate - for haptic feedback
+YouTube limitation:
+This version previews public metadata. It does not download protected YouTube video or audio streams. Duration and view counts are not part of the metadata response used by this version.
 
-Privacy policy: https://github.com/Orang-Studio/InstaDownload/blob/main/PRIVACY.md
+Instagram limitation:
+Instagram can change its responses or rate-limit requests. Only public media and text exposed by Instagram are available. Private/login-gated posts, Stories, and separate audio extraction are not supported in this build.
 
-Source code: https://github.com/Orang-Studio/InstaDownload
+Privacy:
+Preferences and recent Library records are stored locally. When requested, media links are sent directly to Instagram public endpoints; YouTube video URLs and thumbnails are requested from YouTube services. No app-operated proxy is used.
+
+Built by Xboy Rex.
+GitHub profile: https://github.com/xboyrex
+Source: https://github.com/xboyrex/instatube-toolkit-by-xboidx
+YouTube search: https://www.youtube.com/results?search_query=Xboy+Rex
+
+This is a modified fork of InstaDownload by Orang-Studio. The original GPL-3.0 license and attribution are retained. InstaTube Toolkit is not affiliated with or endorsed by Instagram/Meta, YouTube/Google or the upstream maintainers.

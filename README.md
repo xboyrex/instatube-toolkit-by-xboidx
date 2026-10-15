@@ -1,24 +1,34 @@
-# InstaTube Toolkit by XboidX
+# InstaTube Toolkit by Xboy Rex
 
-A community-branded Android app for saving publicly accessible Instagram reels, posts, photos, and carousel media to your device.
+A native Android app built with Kotlin, Jetpack Compose and Material 3, using an iOS-inspired visual language. Maintains the public Instagram media preview/save flow and adds a separate YouTube public-metadata preview.
 
-## UI refresh (v1.1.0)
-- Native Jetpack Compose + Material 3 redesign with a custom adaptive launcher identity.
-- Home flow separates link paste, fetch, preview, selection, and save states.
-- Carousel items can be selected individually, or all selected/cleared together.
-- Library keeps up to 12 recent save records locally (it does not scan all device files).
-- Caption Lab lets you edit/copy captions, extract literal hashtags, and convert a trailing brace-wrapped comma-separated keyword list into clearly labelled hashtag suggestions.
-- Settings exposes download quality, custom width, appearance, haptics, and the download folder.
-- Share a public Instagram link to the app for quick handoff.
+## v1.2.0 redesign
+- Refined grouped layout, compact toolbar, neutral surfaces and four labelled navigation destinations.
+- Branding updated to **Built by Xboy Rex**.
+- Instagram: public post/Reel/photo/carousel preview, individual carousel selection, save, caption copy and hashtag extraction.
+- Caption Studio: isolated editor state, guarded text extraction, copy caption/hashtags/full text. Opening the tab does not start network activity.
+- YouTube: public title, creator/channel name and thumbnail through YouTube oEmbed; open the video in YouTube, copy the link or save the source link to the local Library.
+- Library: last 30 local app records (Instagram saves and YouTube links); no scan of unrelated device files.
+- Settings: theme, quality, custom resolution, haptics, download folder, GitHub/source/license and YouTube creator search links.
+- Custom adaptive launcher icon.
 
-## Build APK with GitHub Actions
+## Build APK
 1. Open **Actions → Build InstaTube Toolkit APK**.
-2. Run the workflow if it did not start automatically after the commit.
-3. Download the `InstaTube-Toolkit-debug-apk` artifact from a successful run.
-4. Extract the artifact ZIP and install the APK on Android. This is a debug-signed APK for testing, not a Play Store release.
+2. Wait for `build-debug-apk` to finish successfully.
+3. Download artifact `InstaTube-Toolkit-debug-apk`; extract the ZIP and install the APK. It is a debug/test build, not a Play Store release.
 
-## Important limitations
-Instagram can change its public webpage response or block requests. Media and caption data are available only when Instagram exposes them to the app. This app does not bypass private/login-gated content, does not extract a separate audio track from video, and does not guarantee every link will work. Download/reuse only content you own or have permission to save.
+Local build needs JDK 17 and Android SDK: `cd InstaDownload && ./gradlew assembleDebug`.
 
-## Open-source attribution
-This project is a modified fork of **InstaDownload** by Orang-Studio. The upstream source is licensed under **GNU GPL v3**; the GPL license and upstream attribution are retained. See `LICENSE` and `NOTICE-XBOIDX.md`. This fork is not affiliated with or endorsed by Instagram/Meta or the upstream maintainers.
+## YouTube limitation
+YouTube URLs are validated and public metadata is fetched using the official oEmbed interface. This build does not extract or download protected YouTube audio/video streams, does not promise views/duration metadata from oEmbed, and directs playback to YouTube. To fetch more metadata through the YouTube Data API, a developer API key and corresponding configuration are required.
+
+## Instagram limitation
+Instagram can change public webpage responses or rate-limit requests. Media and caption information is only available when Instagram exposes it. The app does not bypass private/login-gated content and does not extract separate audio tracks. Download/reuse only content you own or have permission to save.
+
+## Branding links
+- GitHub: https://github.com/xboyrex
+- Source repository: https://github.com/xboyrex/instatube-toolkit-by-xboidx
+- YouTube search for Xboy Rex: https://www.youtube.com/results?search_query=Xboy+Rex (replace with the exact creator-channel URL when available).
+
+## Attribution
+Modified fork of InstaDownload by Orang-Studio. The upstream GNU GPL v3 license and attribution are retained in `LICENSE` and `NOTICE-XBOIDX.md`. Not affiliated with or endorsed by Instagram/Meta, YouTube/Google or upstream maintainers.
