@@ -11,6 +11,7 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -35,6 +36,7 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -57,6 +59,14 @@ private enum class RexTab(val label: String) {
     HOME("Home"), LIBRARY("Library"), CAPTION("Captions"), SETTINGS("Settings")
 }
 private enum class MediaSource(val label: String) { INSTAGRAM("Instagram"), YOUTUBE("YouTube") }
+
+private val topCaptionIdeas = listOf(
+    "Less noise. More moments. ✨",
+    "POV: this one hits different. 🖤",
+    "Main character energy. 🎬",
+    "Made of memories, not filters. ✨",
+    "Save this vibe for later. 🔥"
+)
 private data class RexSavedItem(
     val title: String,
     val url: String,
@@ -320,6 +330,28 @@ private fun RexToolkitRoot(
                                 }.onFailure { errorText = it.message ?: "Saving failed. Try again." }
                             }
                         },
+                        onSaveAudio = { audioItems ->
+                            if (audioItems.isEmpty()) {
+                                errorText = "Select a video that contains an audio track first."
+                            } else {
+                                scope.launch {
+                                    isSaving = true
+                                    errorText = null
+                                    infoText = null
+                                    val result = runCatching {
+                                        withContext(Dispatchers.IO) {
+                                            audioItems.map { saveInstagramAudioToDownloads(it, context, settings) }.any { it }
+                                        }
+                                    }
+                                    isSaving = false
+                                    result.onSuccess { fallbackUsed ->
+                                        infoText = if (fallbackUsed) "Selected folder was unavailable; audio was saved to Downloads/InstaDownload."
+                                            else "Saved audio as M4A without re-encoding."
+                                        Toast.makeText(context, "Audio saved to Downloads/InstaDownload", Toast.LENGTH_LONG).show()
+                                    }.onFailure { errorText = it.message ?: "Audio extraction failed for this video." }
+                                }
+                            }
+                        },
                         onSaveYouTubeLink = {
                             youtubeInfo?.let { info ->
                                 addLibraryEntry(context, RexSavedItem(info.title, info.canonicalUrl, 1, System.currentTimeMillis(), "YouTube"))
@@ -368,13 +400,12 @@ private fun RexTopBar(onGitHub: () -> Unit, onCreator: () -> Unit, onSettings: (
         modifier = Modifier.fillMaxWidth().padding(top = 9.dp, bottom = 3.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Box(
-            modifier = Modifier.size(44.dp).clip(RoundedCornerShape(14.dp))
-                .background(Brush.linearGradient(listOf(RexAccent, RexViolet, RexCoral))),
-            contentAlignment = Alignment.Center
-        ) {
-            Text("IT", color = Color.White, fontWeight = FontWeight.Black, style = MaterialTheme.typography.titleMedium)
-        }
+        Image(
+            painter = painterResource(id = R.drawable.instatube_mark),
+            contentDescription = "InstaTube logo",
+            modifier = Modifier.size(48.dp),
+            contentScale = ContentScale.Fit
+        )
         Spacer(Modifier.width(11.dp))
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
             Text("InstaTube", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, maxLines = 1)
@@ -391,18 +422,25 @@ private fun RexTopBar(onGitHub: () -> Unit, onCreator: () -> Unit, onSettings: (
 @Composable
 private fun RexBottomBar(selected: RexTab, onSelect: (RexTab) -> Unit) {
     Surface(
-        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.98f),
+        modifier = Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 16.dp, vertical = 6.dp),
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
         contentColor = MaterialTheme.colorScheme.onSurface,
-        tonalElevation = 4.dp,
-        shadowElevation = 9.dp
+        shape = RoundedCornerShape(28.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f)),
+        tonalElevation = 0.dp,
+        shadowElevation = 4.dp
     ) {
         Row(
-            modifier = Modifier.fillMaxWidth().navigationBarsPadding().padding(start = 8.dp, end = 8.dp, top = 7.dp, bottom = 3.dp),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 7.dp, vertical = 7.dp),
             horizontalArrangement = Arrangement.SpaceEvenly,
             verticalAlignment = Alignment.CenterVertically
         ) {
             RexTab.values().forEach { destination ->
                 val selectedNow = selected == destination
+                val selectionTint by animateColorAsState(
+                    targetValue = if (selectedNow) RexAccent.copy(alpha = 0.13f) else Color.Transparent,
+                    label = "navigation-selection"
+                )
                 val icon = when (destination) {
                     RexTab.HOME -> AppIcons.PlayArrow
                     RexTab.LIBRARY -> AppIcons.Image
@@ -410,21 +448,30 @@ private fun RexBottomBar(selected: RexTab, onSelect: (RexTab) -> Unit) {
                     RexTab.SETTINGS -> AppIcons.Settings
                 }
                 Column(
-                    modifier = Modifier.weight(1f).clip(RoundedCornerShape(15.dp)).clickable { onSelect(destination) }
-                        .padding(vertical = 5.dp),
+                    modifier = Modifier.weight(1f).clip(RoundedCornerShape(20.dp))
+                        .clickable { onSelect(destination) }.padding(vertical = 2.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(3.dp)
                 ) {
                     Box(
-                        modifier = Modifier.width(47.dp).height(29.dp).clip(RoundedCornerShape(10.dp))
-                            .background(if (selectedNow) RexAccent.copy(alpha = 0.14f) else Color.Transparent),
+                        modifier = Modifier.width(48.dp).height(30.dp).clip(RoundedCornerShape(15.dp))
+                            .background(selectionTint),
                         contentAlignment = Alignment.Center
                     ) {
-                        Icon(icon, contentDescription = destination.label, tint = if (selectedNow) RexAccent else MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(21.dp))
+                        Icon(
+                            icon,
+                            contentDescription = destination.label,
+                            tint = if (selectedNow) RexAccent else MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(21.dp)
+                        )
                     }
-                    Text(destination.label, style = MaterialTheme.typography.labelSmall, maxLines = 1,
+                    Text(
+                        destination.label,
+                        style = MaterialTheme.typography.labelSmall,
+                        maxLines = 1,
                         fontWeight = if (selectedNow) FontWeight.Bold else FontWeight.Normal,
-                        color = if (selectedNow) RexAccent else MaterialTheme.colorScheme.onSurfaceVariant)
+                        color = if (selectedNow) RexAccent else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
             }
         }
@@ -451,6 +498,7 @@ private fun RexHomeScreen(
     onSelectAll: () -> Unit,
     onSelectNone: () -> Unit,
     onSaveInstagram: () -> Unit,
+    onSaveAudio: (List<MediaResult>) -> Unit,
     onSaveYouTubeLink: () -> Unit,
     onOpenYouTube: () -> Unit,
     onCopy: (String, String) -> Unit,
@@ -540,6 +588,7 @@ private fun RexHomeScreen(
                 onSelectAll = onSelectAll,
                 onSelectNone = onSelectNone,
                 onSave = onSaveInstagram,
+                onSaveAudio = onSaveAudio,
                 onCopy = onCopy,
                 onOpenCaptions = onOpenCaptions
             )
@@ -597,8 +646,10 @@ private fun RexMessage(text: String, isError: Boolean) {
 private fun RexInstagramResults(
     media: List<MediaResult>, selected: Set<Int>, isSaving: Boolean,
     onToggle: (Int) -> Unit, onSelectAll: () -> Unit, onSelectNone: () -> Unit,
-    onSave: () -> Unit, onCopy: (String, String) -> Unit, onOpenCaptions: () -> Unit
+    onSave: () -> Unit, onSaveAudio: (List<MediaResult>) -> Unit,
+    onCopy: (String, String) -> Unit, onOpenCaptions: () -> Unit
 ) {
+    val selectedVideos = media.filterIndexed { index, item -> index in selected && item.isVideo }
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -643,6 +694,21 @@ private fun RexInstagramResults(
         ) {
             if (isSaving) { CircularProgressIndicator(Modifier.size(19.dp), color = Color.White, strokeWidth = 2.dp); Spacer(Modifier.width(9.dp)); Text("Saving…") }
             else { Icon(AppIcons.Download, null); Spacer(Modifier.width(8.dp)); Text("Save ${selected.size} ${if (selected.size == 1) "item" else "items"}", fontWeight = FontWeight.Bold) }
+        }
+        if (selectedVideos.isNotEmpty()) {
+            OutlinedButton(
+                onClick = { onSaveAudio(selectedVideos) }, enabled = !isSaving,
+                modifier = Modifier.fillMaxWidth().height(49.dp), shape = RoundedCornerShape(15.dp)
+            ) {
+                Icon(AppIcons.Download, contentDescription = null, tint = RexAccent)
+                Spacer(Modifier.width(8.dp))
+                Text("Extract audio · M4A", color = RexAccent, fontWeight = FontWeight.SemiBold)
+            }
+            Text(
+                "Copies the existing audio track without re-encoding. Available for selected videos that contain audio.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
     }
 }
@@ -696,11 +762,31 @@ private fun RexYouTubeResult(info: YouTubeMetadata, onOpen: () -> Unit, onCopy: 
         ) {
             Column {
                 RexRemoteThumbnail(url = info.thumbnailUrl, description = "YouTube video thumbnail", modifier = Modifier.fillMaxWidth().height(205.dp))
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
                     Text("YOUTUBE VIDEO", style = MaterialTheme.typography.labelSmall, color = RexAccent, fontWeight = FontWeight.Bold)
                     Text(info.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                     Text(info.author, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text("Metadata is provided by YouTube's public oEmbed response. Views and duration aren't included in this response.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    if (info.durationSeconds > 0L) {
+                        val duration = "${info.durationSeconds / 60}:${(info.durationSeconds % 60).toString().padStart(2, '0')}"
+                        Text("Duration · $duration", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Divider()
+                    Text("DESCRIPTION", style = MaterialTheme.typography.labelMedium, color = RexAccent, fontWeight = FontWeight.Bold)
+                    Text(info.description.ifBlank { "Description is unavailable from the public page for this video." }, style = MaterialTheme.typography.bodyMedium)
+                    if (info.description.isNotBlank()) {
+                        OutlinedButton(onClick = { onCopy("YouTube description", info.description) }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(13.dp)) {
+                            Icon(AppIcons.ContentCopy, null, tint = RexAccent); Spacer(Modifier.width(7.dp)); Text("Copy full description", color = RexAccent)
+                        }
+                    }
+                    Divider()
+                    Text("KEYWORDS", style = MaterialTheme.typography.labelMedium, color = RexAccent, fontWeight = FontWeight.Bold)
+                    Text(info.keywords.takeIf { it.isNotEmpty() }?.joinToString(", ") ?: "No public keywords were returned for this video.", style = MaterialTheme.typography.bodyMedium)
+                    if (info.keywords.isNotEmpty()) {
+                        OutlinedButton(onClick = { onCopy("YouTube keywords", info.keywords.joinToString(", ")) }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(13.dp)) {
+                            Icon(AppIcons.ContentCopy, null, tint = RexAccent); Spacer(Modifier.width(7.dp)); Text("Copy keywords", color = RexAccent)
+                        }
+                    }
+                    Text("Details are read from public metadata where available. Restricted videos or page changes can limit what YouTube exposes.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Button(onClick = onOpen, modifier = Modifier.fillMaxWidth().height(49.dp), shape = RoundedCornerShape(14.dp), colors = ButtonDefaults.buttonColors(containerColor = RexAccent, contentColor = Color.White)) {
                         Icon(AppIcons.PlayArrow, null); Spacer(Modifier.width(8.dp)); Text("Open in YouTube", fontWeight = FontWeight.Bold)
                     }
@@ -741,7 +827,7 @@ private fun RexQuickStart(source: MediaSource) {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text(if (source == MediaSource.INSTAGRAM) "Simple by design" else "YouTube, neatly organized", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
         RexTip("01", if (source == MediaSource.INSTAGRAM) "Paste a public post" else "Paste a video URL", if (source == MediaSource.INSTAGRAM) "Reels, photos, carousels and public profile pictures." else "Watch links, Shorts and youtu.be links are supported.")
-        RexTip("02", "Preview before acting", if (source == MediaSource.INSTAGRAM) "Select just the carousel items you need." else "See the public title, channel name and thumbnail before opening the video.")
+        RexTip("02", "Preview before acting", if (source == MediaSource.INSTAGRAM) "Select just the carousel items you need." else "See the title, description, keywords and thumbnail before opening the video.")
         RexTip("03", "Keep your text", "Copy captions or hashtags and find saved links in your local Library.")
     }
 }
@@ -795,12 +881,12 @@ private fun RexLibraryScreen(refreshKey: Int, onCopy: (String) -> Unit, onOpen: 
 
 @Composable
 private fun RexCaptionLabScreen(text: String, onTextChange: (String) -> Unit, onCopy: (String, String) -> Unit) {
-    // This destination is intentionally self-contained: opening it never triggers a fetch or download.
-    val tags = remember(text) { hashtagsOrSuggestions(text) }
-    val literalHashtags = remember(text) { extractLiteralHashtags(text) }
+    // The screen reads no network data and performs no download when opened.
+    val tags = remember(text) { runCatching { hashtagsOrSuggestions(text) }.getOrDefault("") }
+    val literalHashtags = remember(text) { runCatching { extractLiteralHashtags(text) }.getOrDefault("") }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(bottom = 18.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         Text("Caption Studio", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
-        Text("Edit your text. Copy exactly what you need.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text("Edit, copy, or start from a caption idea.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(22.dp), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = .45f))) {
             Column(Modifier.padding(15.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -808,17 +894,10 @@ private fun RexCaptionLabScreen(text: String, onTextChange: (String) -> Unit, on
                     Text("${text.length} characters", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 OutlinedTextField(
-                    value = text,
-                    onValueChange = onTextChange,
-                    modifier = Modifier.fillMaxWidth(),
-                    placeholder = { Text("Paste or fetch a caption to edit it here") },
-                    minLines = 6,
-                    maxLines = 12,
+                    value = text, onValueChange = onTextChange, modifier = Modifier.fillMaxWidth(),
+                    placeholder = { Text("Paste or fetch a caption to edit it here") }, minLines = 6, maxLines = 12,
                     shape = RoundedCornerShape(15.dp),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = RexAccent,
-                        cursorColor = RexAccent
-                    )
+                    colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = RexAccent, cursorColor = RexAccent)
                 )
                 Button(onClick = { onCopy("Caption", text.trim()) }, modifier = Modifier.fillMaxWidth().height(48.dp), shape = RoundedCornerShape(14.dp), colors = ButtonDefaults.buttonColors(containerColor = RexAccent, contentColor = Color.White)) {
                     Icon(AppIcons.ContentCopy, null); Spacer(Modifier.width(8.dp)); Text("Copy caption")
@@ -834,6 +913,20 @@ private fun RexCaptionLabScreen(text: String, onTextChange: (String) -> Unit, on
                 } else {
                     Text(tags, style = MaterialTheme.typography.bodyMedium)
                     if (literalHashtags.isBlank()) Text("Suggestions are derived from the trailing keyword block; review them before posting.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        }
+        Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(22.dp), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = .45f))) {
+            Column(Modifier.fillMaxWidth().padding(15.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("TOP 5 CAPTION IDEAS", style = MaterialTheme.typography.labelMedium, color = RexAccent, fontWeight = FontWeight.Bold)
+                Text("High-engagement style ideas. This build does not query live like counts to rank captions.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                topCaptionIdeas.forEachIndexed { index, idea ->
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("${index + 1}.", color = RexAccent, fontWeight = FontWeight.Bold, modifier = Modifier.width(26.dp))
+                        Text(idea, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                        TextButton(onClick = { onCopy("Caption idea", idea) }) { Text("Copy", color = RexAccent) }
+                    }
+                    if (index != topCaptionIdeas.lastIndex) Divider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = .5f))
                 }
             }
         }
@@ -886,7 +979,7 @@ private fun RexSettingsScreen(
                     Text("Haptic feedback", fontWeight = FontWeight.SemiBold)
                     Text("Vibrate on download events", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                Switch(checked = haptics, onCheckedChange = onHaptics, colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = RexAccent))
+                Switch(checked = haptics, onCheckedChange = onHaptics, colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = Color(0xFF34C759), checkedBorderColor = Color.Transparent, uncheckedThumbColor = Color.White, uncheckedTrackColor = Color(0xFFE5E5EA), uncheckedBorderColor = Color.Transparent))
             }
         }
         RexSettingsGroup(title = "DOWNLOAD LOCATION") {

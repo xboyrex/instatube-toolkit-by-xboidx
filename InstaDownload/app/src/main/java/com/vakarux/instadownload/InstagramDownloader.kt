@@ -253,10 +253,11 @@ object InstagramDownloader {
         .get().build()
 
     fun downloadToStream(url: String, out: java.io.OutputStream) {
-        val response = client.newCall(mediaRequest(url)).execute()
-        if (!response.isSuccessful) throw Exception("Download HTTP ${response.code}")
-        response.body?.byteStream()?.copyTo(out)
-            ?: throw Exception("Empty download body")
+        client.newCall(mediaRequest(url)).execute().use { response ->
+            if (!response.isSuccessful) throw Exception("Download HTTP ${response.code}")
+            response.body?.byteStream()?.copyTo(out)
+                ?: throw Exception("Empty download body")
+        }
     }
 
     fun contentLength(url: String): Long =
@@ -264,11 +265,11 @@ object InstagramDownloader {
             it.header("Content-Length")?.toLongOrNull() ?: -1L
         }
 
-    fun fetchBytes(url: String): ByteArray {
-        val response = client.newCall(mediaRequest(url)).execute()
-        if (!response.isSuccessful) throw Exception("Preview HTTP ${response.code}")
-        return response.body?.bytes() ?: throw Exception("Empty preview body")
-    }
+    fun fetchBytes(url: String): ByteArray =
+        client.newCall(mediaRequest(url)).execute().use { response ->
+            if (!response.isSuccessful) throw Exception("Preview HTTP ${response.code}")
+            response.body?.bytes() ?: throw Exception("Empty preview body")
+        }
 
     private fun extractShortcode(url: String): String? {
         val m = SHORTCODE_REGEX.matcher(url)

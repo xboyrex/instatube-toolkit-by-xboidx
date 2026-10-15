@@ -12,8 +12,8 @@ android {
         applicationId = "com.xboidx.instatubetoolkit"
         minSdk = 24  // Android 7.0 (Nougat)
         targetSdk = 36
-        versionCode = 3
-        versionName = "1.2.0"
+        versionCode = 4
+        versionName = "1.3.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 

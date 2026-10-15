@@ -26,7 +26,7 @@ for condition, label in [
     ('.ModernHomeActivity' in manifest and 'android.intent.action.MAIN' in manifest, "launcher points to redesign activity"),
     ('RexCaptionLabScreen' in modern and 'fetchCurrent' in modern, "caption editor and fetch flow exist"),
     ('youtube.com/oembed' in resolver and 'fetchMetadata' in resolver, "YouTube metadata path uses public oEmbed"),
-    ('versionCode = 3' in gradle and 'versionName = "1.2.0"' in gradle, "version bumped to 1.2.0"),
+    ('versionCode = 4' in gradle and 'versionName = "1.3.0"' in gradle, "version bumped to 1.3.0"),
     ('Xboy Rex' in (ROOT / "README.md").read_text(encoding="utf-8"), "Xboy Rex attribution present"),
 ]:
     if condition:
