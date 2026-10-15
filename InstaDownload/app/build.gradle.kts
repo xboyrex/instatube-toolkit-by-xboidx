@@ -13,7 +13,7 @@ android {
         minSdk = 24  // Android 7.0 (Nougat)
         targetSdk = 36
         versionCode = 4
-        versionName = "1.3.0"
+        versionName = "1.4.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 

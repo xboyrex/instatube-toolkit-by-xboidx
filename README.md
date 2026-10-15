@@ -2,7 +2,7 @@
 
 A native Android app built with Kotlin, Jetpack Compose and Material 3, using an iOS-inspired visual language. Maintains the public Instagram media preview/save flow and adds a separate YouTube public-metadata preview.
 
-## v1.3.0 — glass navigation, audio extraction and richer metadata
+## v1.2.0 redesign
 - Refined grouped layout, compact toolbar, neutral surfaces and four labelled navigation destinations.
 - Branding updated to **Built by Xboy Rex**.
 - Instagram: public post/Reel/photo/carousel preview, individual carousel selection, save, caption copy and hashtag extraction.
@@ -10,11 +10,7 @@ A native Android app built with Kotlin, Jetpack Compose and Material 3, using an
 - YouTube: public title, creator/channel name and thumbnail through YouTube oEmbed; open the video in YouTube, copy the link or save the source link to the local Library.
 - Library: last 30 local app records (Instagram saves and YouTube links); no scan of unrelated device files.
 - Settings: theme, quality, custom resolution, haptics, download folder, GitHub/source/license and YouTube creator search links.
-- Custom InstaTube toolbar mark from the supplied transparent logo.
-- iOS-inspired translucent capsule navigation, animated selected state, and green ON / neutral OFF switches.
-- Instagram video audio extraction to M4A by remuxing the existing audio track without re-encoding.
-- Five copyable high-engagement-style caption ideas. These are suggestions, not a live like-count ranking.
-- YouTube title, public description, tags/keywords and duration when exposed by public watch-page metadata, with oEmbed fallback.
+- Custom adaptive launcher icon.
 
 ## Build APK
 1. Open **Actions → Build InstaTube Toolkit APK**.
@@ -24,7 +20,7 @@ A native Android app built with Kotlin, Jetpack Compose and Material 3, using an
 Local build needs JDK 17 and Android SDK: `cd InstaDownload && ./gradlew assembleDebug`.
 
 ## YouTube limitation
-YouTube links are validated and public title/channel/thumbnail metadata is fetched with oEmbed. The app also best-effort reads description, keywords/tags and duration from public watch-page metadata; restricted videos, rate limits or markup changes can make those fields unavailable. It does not extract or download protected YouTube audio/video streams. The YouTube Data API is the supported structured alternative for metadata and requires a configured developer API key.
+YouTube URLs are validated and public metadata is fetched using the official oEmbed interface. This build does not extract or download protected YouTube audio/video streams, does not promise views/duration metadata from oEmbed, and directs playback to YouTube. To fetch more metadata through the YouTube Data API, a developer API key and corresponding configuration are required.
 
 ## Instagram limitation
 Instagram can change public webpage responses or rate-limit requests. Media and caption information is only available when Instagram exposes it. The app does not bypass private/login-gated content and does not extract separate audio tracks. Download/reuse only content you own or have permission to save.
@@ -36,3 +32,16 @@ Instagram can change public webpage responses or rate-limit requests. Media and 
 
 ## Attribution
 Modified fork of InstaDownload by Orang-Studio. The upstream GNU GPL v3 license and attribution are retained in `LICENSE` and `NOTICE-XBOIDX.md`. Not affiliated with or endorsed by Instagram/Meta, YouTube/Google or upstream maintainers.
+
+
+## InstaTube Toolkit 1.4.0 integration notes
+
+This Xboy Rex-branded build keeps the upstream public Instagram-media parsing flow and the lightweight Compose interface, with additional copy and captions workflows.
+
+- Floating glass-style bottom navigation with inset spacing; Xboy Rex/InstaTube mark is used in the header and Android launcher icon densities.
+- YouTube public metadata: title, creator, thumbnail and best-effort description, with separate copy actions for title, description and canonical link.
+- Public caption-track transcript loading is available when YouTube exposes a caption URL. This is a caption-based transcript, not extraction/transcription of protected video audio.
+- YouTube protected video streams are not extracted. The download-options control opens the video so the user can use YouTube's built-in download feature where available or a creator-provided file.
+- Instagram public media can be saved to Downloads/InstaDownload. A selected Reel's existing audio track can be muxed to an M4A file under Music/InstaTube; this uses the audio-appropriate MediaStore directory to avoid the "Download not allowed for audio/media" error.
+
+Public-site HTML and captions may be unavailable or may change. The included verifier is a structural source check, not proof that Gradle compilation or all live-site flows succeed; CI must still compile and upload a debug APK. Only save media you own or have permission to download.
